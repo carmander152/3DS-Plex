@@ -1192,12 +1192,13 @@ static void build_fallback_stream_url(const MediaItem *item, char *out, size_t o
     
     QualityProfile q = quality_profile();
     
+    // Put container=mpegts and videoResolution back in so Plex doesn't reject it
     snprintf(out, outsz,
-             "%s/video/:/transcode/universal/start.ts?path=%s&mediaIndex=0&partIndex=0&protocol=http"
-             "&offset=0&fastSeek=1&directPlay=0&directStream=0&videoQuality=100"
-             "&maxVideoBitrate=%d&videoCodec=h264&audioCodec=aac&audioChannels=2"
-             "&session=3dPlexSession&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
-             g_cfg.server, enc_key, (q.video_bitrate / 1000),
+             "%s/video/:/transcode/universal/start?path=%s&mediaIndex=0&partIndex=0&protocol=http"
+             "&container=mpegts&offset=0&fastSeek=1&directPlay=0&directStream=0&videoQuality=100"
+             "&videoResolution=%dx%d&maxVideoBitrate=%d&videoCodec=h264&audioCodec=aac&audioChannels=2"
+             "&session=3dPlex-Session-1&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
+             g_cfg.server, enc_key, q.width, q.height, (q.video_bitrate / 1000),
              enc_client, g_cfg.token);
 }
 
@@ -1209,26 +1210,29 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
     url_encode(item->id, enc_key, sizeof(enc_key)); 
     url_encode(g_cfg.client_identifier, enc_client, sizeof(enc_client));
     
+    QualityProfile q = quality_profile();
     unsigned long long offset_seconds = start_time_ticks / TICKS_PER_SECOND;
 
     if (avi_container) {
         snprintf(out, outsz,
-                 "%s/video/:/transcode/universal/start.avi?path=%s&mediaIndex=0&partIndex=0&protocol=http"
-                 "&offset=%llu&fastSeek=1&directPlay=0&directStream=0&videoQuality=100"
-                 "&maxVideoBitrate=%d&videoCodec=mjpeg&audioCodec=pcm_s16le&audioChannels=1&audioSampleRate=%d"
-                 "&videoFramerate=%d&session=3dPlexSession&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
-                 g_cfg.server, enc_key, offset_seconds, (mjpeg_target_bitrate() / 1000),
+                 "%s/video/:/transcode/universal/start?path=%s&mediaIndex=0&partIndex=0&protocol=http"
+                 "&container=avi&offset=%llu&fastSeek=1&directPlay=0&directStream=0&videoQuality=100"
+                 "&videoResolution=%dx%d&maxVideoBitrate=%d&videoCodec=mjpeg&audioCodec=pcm_s16le&audioChannels=1"
+                 "&audioSampleRate=%d&videoFramerate=%d&session=3dPlex-Session-1&X-Plex-Platform=Nintendo%%203DS"
+                 "&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
+                 g_cfg.server, enc_key, offset_seconds, q.width, q.height, (mjpeg_target_bitrate() / 1000),
                  AUDIO_SAMPLE_RATE, fps, enc_client, g_cfg.token);
     } else {
         snprintf(out, outsz,
-                 "%s/video/:/transcode/universal/start.mjpeg?path=%s&mediaIndex=0&partIndex=0&protocol=http"
-                 "&offset=%llu&fastSeek=1&directPlay=0&directStream=0&videoQuality=100"
-                 "&maxVideoBitrate=%d&videoCodec=mjpeg&videoFramerate=%d"
-                 "&session=3dPlexSession&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
-                 g_cfg.server, enc_key, offset_seconds, (mjpeg_target_bitrate() / 1000),
+                 "%s/video/:/transcode/universal/start?path=%s&mediaIndex=0&partIndex=0&protocol=http"
+                 "&container=mjpeg&offset=%llu&fastSeek=1&directPlay=0&directStream=0&videoQuality=100"
+                 "&videoResolution=%dx%d&maxVideoBitrate=%d&videoCodec=mjpeg&videoFramerate=%d"
+                 "&session=3dPlex-Session-1&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
+                 g_cfg.server, enc_key, offset_seconds, q.width, q.height, (mjpeg_target_bitrate() / 1000),
                  fps, enc_client, g_cfg.token);
     }
 }
+
 
 
 static void set_play_status(const char *fmt, ...)
