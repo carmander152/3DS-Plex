@@ -1006,12 +1006,21 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
 
 static void build_url(char *out, size_t outsz, const char *path)
 {
+    char raw_url[768];
     if (starts_with_http(path)) {
-        snprintf(out, outsz, "%s", path);
+        snprintf(raw_url, sizeof(raw_url), "%s", path);
     } else {
-        snprintf(out, outsz, "%s%s%s", g_cfg.server, path[0] == '/' ? "" : "/", path);
+        snprintf(raw_url, sizeof(raw_url), "%s%s%s", g_cfg.server, path[0] == '/' ? "" : "/", path);
     }
+
+    // We route the request through a public high-speed CORS proxy.
+    // This handles the heavy modern SSL handshake for the 3DS!
+    char enc_raw_url[1024];
+    url_encode(raw_url, enc_raw_url, sizeof(enc_raw_url));
+    
+    snprintf(out, outsz, "http://corsproxy.io/?%s", enc_raw_url);
 }
+
 
 Result api_get(const char *path, HttpResponse *out)
 {
