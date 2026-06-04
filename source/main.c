@@ -684,7 +684,7 @@ static const char *find_key_range(const char *start, const char *end, const char
         if (c == '}' || c == ']') { depth--; continue; }
         if (c != '"') continue;
 
-        if (depth == 1 && (size_t)(end - p) > klen + 2 && strncmp(p + 1, key, klen) == 0 && p[klen + 1] == '"') {
+        if ((depth == 1 || depth == 2) && (size_t)(end - p) > klen + 2 && strncmp(p + 1, key, klen) == 0 && p[klen + 1] == '"') {
             const char *q = skip_ws(p + klen + 2, end);
             if (q < end && *q == ':') return skip_ws(q + 1, end);
         }
