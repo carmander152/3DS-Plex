@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     
-    # We use the official devkitPro Docker image which has the compilers pre-installed
+    # We use the official devkitPro Docker image which has everything pre-installed
     container:
       image: devkitpro/devkitarm:latest
 
@@ -18,12 +18,8 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install 3DS Libraries
-        # Installs the full 3ds-dev group, which includes citro2d and citro3d natively
-        run: dkp-pacman -Syu --noconfirm 3ds-dev
-
       - name: Build .3dsx
-        # We run the standard make command (ignoring the 'cia' target to avoid Windows PowerShell)
+        # We run the standard make command directly; no library installation needed
         run: make
 
       - name: Upload Artifacts
