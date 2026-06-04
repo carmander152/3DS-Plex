@@ -16,9 +16,9 @@ INCLUDES    := include
 GRAPHICS    := gfx
 GFXBUILD    := $(BUILD)
 
-APP_TITLE       := 3dJelly
-APP_DESCRIPTION := Jellyfin client for Nintendo 3DS
-APP_AUTHOR      := 8 Bit Studio
+APP_TITLE       := 3DS Plex
+APP_DESCRIPTION := Plex client for Nintendo 3DS
+APP_AUTHOR      := Fork by Carmander152
 APP_ICON        := $(TOPDIR)/gfx/icon.png
 
 include $(DEVKITARM)/3ds_rules
