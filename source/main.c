@@ -18,7 +18,7 @@
 // Keeping Jellyfin's exact memory limits and timeouts to ensure the hardware player doesn't crash
 #define MAX_ITEMS 36
 #define MAX_STACK 8
-#define HTTP_CAP (1024 * 1024)
+#define HTTP_CAP (8 * 1024 * 1024)
 #define HTTP_STATUS_NONE 0xFFFFFFFFu
 #define HTTP_STATUS_TIMEOUT_NS 15000000000ULL
 #define STREAM_READ_TIMEOUT_NS 100000000ULL
