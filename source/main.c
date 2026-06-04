@@ -11,10 +11,11 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define APP_VERSION "0.2.0"
-#define CONFIG_DIR "sdmc:/3dJelly"
-#define CONFIG_PATH "sdmc:/3dJelly/config.ini"
+#define APP_VERSION "0.1.0-plex"
+#define CONFIG_DIR "sdmc:/3dPlex"
+#define CONFIG_PATH "sdmc:/3dPlex/config.ini"
 
+// Keeping Jellyfin's exact memory limits and timeouts to ensure the hardware player doesn't crash
 #define MAX_ITEMS 36
 #define MAX_STACK 8
 #define HTTP_CAP (1024 * 1024)
@@ -45,6 +46,7 @@
 #define QUALITY_OSD_FADE_MS 650
 #define TICKS_PER_SECOND 10000000ULL
 
+// Keeping Jellyfin's views to preserve the UI logic
 typedef enum {
     VIEW_SETUP,
     VIEW_LIBRARIES,
@@ -59,6 +61,7 @@ typedef enum {
     MJPEG_PLAY_RESTART
 } MjpegPlayResult;
 
+// Kept identical to Jellyfin so `parse_items` and the UI render loops don't break
 typedef struct {
     char id[80];
     char name[128];
@@ -81,13 +84,13 @@ typedef struct {
     int scroll;
 } NavFrame;
 
+// Updated for Plex: Replaced user_id with client_identifier, token limits increased
 typedef struct {
     char server[256];
     char username[96];
     char password[96];
     char token[192];
-    char user_id[80];
-    char device_id[80];
+    char client_identifier[80]; 
     int quality; /* 144, 240, 241 (Old3DS 240HQ), 360, or 480 */
 } Config;
 
@@ -126,7 +129,9 @@ static int g_scroll;
 static int g_setup_row;
 static char g_screen_title[96] = "Libraries";
 static char g_current_parent_id[80];
-static char g_status[192] = "Press Y to configure a Jellyfin server.";
+static char g_status[192] = "Press Y to configure a Plex server.";
+
+// Playback variables preserved for the hardware decoder
 static char g_play_url[STREAM_URL_CAP];
 static char g_play_method[64];
 static char g_play_session[96];
@@ -146,13 +151,14 @@ static bool g_http_ready;
 static aptHookCookie g_apt_hook;
 static bool g_apt_hooked;
 
+// UI Colors preserved
 static const u32 COL_BG = 0xFF101010;
 static const u32 COL_PAPER = 0xFF202020;
 static const u32 COL_CARD = 0xFF00455C;
 static const u32 COL_CARD_2 = 0xFF1C4C5C;
-static const u32 COL_PRIMARY = 0xFF00A4DC;
-static const u32 COL_PRIMARY_DARK = 0xFF00729A;
-static const u32 COL_SECONDARY = 0xFFAA5CC3;
+static const u32 COL_PRIMARY = 0xFFE5A00D; // Changed to Plex Yellow/Orange
+static const u32 COL_PRIMARY_DARK = 0xFFCC7B19;
+static const u32 COL_SECONDARY = 0xFFCCCCCC;
 static const u32 COL_WHITE = 0xFFFFFFFF;
 static const u32 COL_MUTED = 0xFFB5B5B5;
 
@@ -173,7 +179,6 @@ static u64 clamp_media_ticks(u64 ticks);
 
 static const int QUALITY_LEVELS_NEW3DS[] = {144, 240, 360, 480};
 static const int QUALITY_LEVELS_OLD3DS[] = {144, 240, 241};
-
 static void app_apt_hook(APT_HookType hook, void *param)
 {
     (void)param;
@@ -321,28 +326,20 @@ static int mjpeg_target_fps(void)
 {
     if (g_is_new_3ds) {
         switch (g_cfg.quality) {
-        case 144:
-            return 15;
-        case 360:
-            return 10;
-        case 480:
-            return 8;
+        case 144: return 15;
+        case 360: return 10;
+        case 480: return 8;
         case 240:
-        default:
-            return 12;
+        default: return 12;
         }
     }
     switch (g_cfg.quality) {
-    case 241:
-        return 10;
-    case 360:
-        return 8;
-    case 480:
-        return 6;
+    case 241: return 10;
+    case 360: return 8;
+    case 480: return 6;
     case 144:
     case 240:
-    default:
-        return 12;
+    default: return 12;
     }
 }
 
@@ -350,29 +347,20 @@ static int mjpeg_target_bitrate(void)
 {
     if (g_is_new_3ds) {
         switch (g_cfg.quality) {
-        case 144:
-            return 520000;
-        case 360:
-            return 1100000;
-        case 480:
-            return 1600000;
+        case 144: return 520000;
+        case 360: return 1100000;
+        case 480: return 1600000;
         case 240:
-        default:
-            return 760000;
+        default: return 760000;
         }
     }
     switch (g_cfg.quality) {
-    case 144:
-        return 420000;
-    case 241:
-        return 1100000;
-    case 360:
-        return 850000;
-    case 480:
-        return 1200000;
+    case 144: return 420000;
+    case 241: return 1100000;
+    case 360: return 850000;
+    case 480: return 1200000;
     case 240:
-    default:
-        return 820000;
+    default: return 820000;
     }
 }
 
@@ -397,26 +385,20 @@ static void apply_hardware_defaults(void)
 
 static void copy_safe(char *dst, size_t dstsz, const char *src)
 {
-    if (!dst || dstsz == 0) {
-        return;
-    }
+    if (!dst || dstsz == 0) return;
     if (!src) {
         dst[0] = 0;
         return;
     }
     size_t n = strlen(src);
-    if (n >= dstsz) {
-        n = dstsz - 1;
-    }
+    if (n >= dstsz) n = dstsz - 1;
     memcpy(dst, src, n);
     dst[n] = 0;
 }
 
 static bool append_char(char *out, size_t outsz, size_t *w, char c)
 {
-    if (!out || !w || *w + 1 >= outsz) {
-        return false;
-    }
+    if (!out || !w || *w + 1 >= outsz) return false;
     out[(*w)++] = c;
     out[*w] = 0;
     return true;
@@ -425,9 +407,7 @@ static bool append_char(char *out, size_t outsz, size_t *w, char c)
 static bool append_text(char *out, size_t outsz, size_t *w, const char *text)
 {
     for (size_t i = 0; text && text[i]; i++) {
-        if (!append_char(out, outsz, w, text[i])) {
-            return false;
-        }
+        if (!append_char(out, outsz, w, text[i])) return false;
     }
     return true;
 }
@@ -438,22 +418,16 @@ static bool append_utf8_codepoint(char *out, size_t outsz, size_t *w, u32 cp)
         return append_char(out, outsz, w, (char)cp);
     }
     if (cp <= 0x7FF) {
-        if (!out || !w || *w + 2 >= outsz) {
-            return false;
-        }
+        if (!out || !w || *w + 2 >= outsz) return false;
         out[(*w)++] = (char)(0xC0 | (cp >> 6));
         out[(*w)++] = (char)(0x80 | (cp & 0x3F));
     } else if (cp <= 0xFFFF) {
-        if (!out || !w || *w + 3 >= outsz || (cp >= 0xD800 && cp <= 0xDFFF)) {
-            return false;
-        }
+        if (!out || !w || *w + 3 >= outsz || (cp >= 0xD800 && cp <= 0xDFFF)) return false;
         out[(*w)++] = (char)(0xE0 | (cp >> 12));
         out[(*w)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
         out[(*w)++] = (char)(0x80 | (cp & 0x3F));
     } else if (cp <= 0x10FFFF) {
-        if (!out || !w || *w + 4 >= outsz) {
-            return false;
-        }
+        if (!out || !w || *w + 4 >= outsz) return false;
         out[(*w)++] = (char)(0xF0 | (cp >> 18));
         out[(*w)++] = (char)(0x80 | ((cp >> 12) & 0x3F));
         out[(*w)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
@@ -465,155 +439,46 @@ static bool append_utf8_codepoint(char *out, size_t outsz, size_t *w, u32 cp)
     return true;
 }
 
-static bool append_hangul_codepoint(char *out, size_t outsz, size_t *w, u32 cp)
-{
-    static const char *initials[] = {
-        "g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s",
-        "ss", "", "j", "jj", "ch", "k", "t", "p", "h"
-    };
-    static const char *vowels[] = {
-        "a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa",
-        "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"
-    };
-    static const char *finals[] = {
-        "", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lk",
-        "lm", "lb", "ls", "lt", "lp", "lh", "m", "p", "ps", "t",
-        "t", "ng", "t", "t", "k", "t", "p", "t"
-    };
-
-    if (cp >= 0xAC00 && cp <= 0xD7A3) {
-        u32 s = cp - 0xAC00;
-        u32 initial = s / (21 * 28);
-        u32 vowel = (s % (21 * 28)) / 28;
-        u32 final = s % 28;
-        return append_text(out, outsz, w, initials[initial]) &&
-               append_text(out, outsz, w, vowels[vowel]) &&
-               append_text(out, outsz, w, finals[final]);
-    }
-
-    switch (cp) {
-    case 0x3131:
-    case 0x1100:
-        return append_text(out, outsz, w, "g");
-    case 0x3132:
-    case 0x1101:
-        return append_text(out, outsz, w, "kk");
-    case 0x3134:
-    case 0x1102:
-        return append_text(out, outsz, w, "n");
-    case 0x3137:
-    case 0x1103:
-        return append_text(out, outsz, w, "d");
-    case 0x3138:
-    case 0x1104:
-        return append_text(out, outsz, w, "tt");
-    case 0x3139:
-    case 0x1105:
-        return append_text(out, outsz, w, "r");
-    case 0x3141:
-    case 0x1106:
-        return append_text(out, outsz, w, "m");
-    case 0x3142:
-    case 0x1107:
-        return append_text(out, outsz, w, "b");
-    case 0x3143:
-    case 0x1108:
-        return append_text(out, outsz, w, "pp");
-    case 0x3145:
-    case 0x1109:
-        return append_text(out, outsz, w, "s");
-    case 0x3146:
-    case 0x110A:
-        return append_text(out, outsz, w, "ss");
-    case 0x3147:
-    case 0x110B:
-        return append_text(out, outsz, w, "ng");
-    case 0x3148:
-    case 0x110C:
-        return append_text(out, outsz, w, "j");
-    case 0x3149:
-    case 0x110D:
-        return append_text(out, outsz, w, "jj");
-    case 0x314A:
-    case 0x110E:
-        return append_text(out, outsz, w, "ch");
-    case 0x314B:
-    case 0x110F:
-        return append_text(out, outsz, w, "k");
-    case 0x314C:
-    case 0x1110:
-        return append_text(out, outsz, w, "t");
-    case 0x314D:
-    case 0x1111:
-        return append_text(out, outsz, w, "p");
-    case 0x314E:
-    case 0x1112:
-        return append_text(out, outsz, w, "h");
-    default:
-        return false;
-    }
-}
-
 static bool append_display_codepoint(char *out, size_t outsz, size_t *w, u32 cp)
 {
-    if ((cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0x3130 && cp <= 0x318F) || (cp >= 0x1100 && cp <= 0x11FF)) {
-        return append_hangul_codepoint(out, outsz, w, cp);
-    }
-
     switch (cp) {
-    case 0x00A0:
-        return append_char(out, outsz, w, ' ');
+    case 0x00A0: return append_char(out, outsz, w, ' ');
     case 0x2018:
     case 0x2019:
     case 0x201A:
     case 0x201B:
-    case 0x2032:
-        return append_char(out, outsz, w, '\'');
+    case 0x2032: return append_char(out, outsz, w, '\'');
     case 0x201C:
     case 0x201D:
     case 0x201E:
     case 0x201F:
-    case 0x2033:
-        return append_char(out, outsz, w, '"');
+    case 0x2033: return append_char(out, outsz, w, '"');
     case 0x2010:
     case 0x2011:
     case 0x2012:
     case 0x2013:
     case 0x2014:
-    case 0x2212:
-        return append_char(out, outsz, w, '-');
-    case 0x2026:
-        return append_text(out, outsz, w, "...");
-    default:
-        return append_utf8_codepoint(out, outsz, w, cp);
+    case 0x2212: return append_char(out, outsz, w, '-');
+    case 0x2026: return append_text(out, outsz, w, "...");
+    default:     return append_utf8_codepoint(out, outsz, w, cp);
     }
 }
 
 static int hex_value(char c)
 {
-    if (c >= '0' && c <= '9') {
-        return c - '0';
-    }
-    if (c >= 'a' && c <= 'f') {
-        return c - 'a' + 10;
-    }
-    if (c >= 'A' && c <= 'F') {
-        return c - 'A' + 10;
-    }
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
     return -1;
 }
 
 static bool read_json_hex4(const char *p, const char *end, u32 *out)
 {
-    if (!p || !out || p + 4 > end) {
-        return false;
-    }
+    if (!p || !out || p + 4 > end) return false;
     u32 cp = 0;
     for (int i = 0; i < 4; i++) {
         int v = hex_value(p[i]);
-        if (v < 0) {
-            return false;
-        }
+        if (v < 0) return false;
         cp = (cp << 4) | (u32)v;
     }
     *out = cp;
@@ -622,39 +487,23 @@ static bool read_json_hex4(const char *p, const char *end, u32 *out)
 
 static size_t read_utf8_codepoint(const char *p, const char *end, u32 *out)
 {
-    if (!p || !out || p >= end) {
-        return 0;
-    }
-
+    if (!p || !out || p >= end) return 0;
     unsigned char c0 = (unsigned char)p[0];
     if (c0 < 0x80) {
         *out = c0;
         return 1;
     }
-
     size_t len = 0;
     u32 cp = 0;
-    if ((c0 & 0xE0) == 0xC0) {
-        len = 2;
-        cp = c0 & 0x1F;
-    } else if ((c0 & 0xF0) == 0xE0) {
-        len = 3;
-        cp = c0 & 0x0F;
-    } else if ((c0 & 0xF8) == 0xF0) {
-        len = 4;
-        cp = c0 & 0x07;
-    } else {
-        return 0;
-    }
+    if ((c0 & 0xE0) == 0xC0) { len = 2; cp = c0 & 0x1F; }
+    else if ((c0 & 0xF0) == 0xE0) { len = 3; cp = c0 & 0x0F; }
+    else if ((c0 & 0xF8) == 0xF0) { len = 4; cp = c0 & 0x07; }
+    else return 0;
 
-    if (p + len > end) {
-        return 0;
-    }
+    if (p + len > end) return 0;
     for (size_t i = 1; i < len; i++) {
         unsigned char cx = (unsigned char)p[i];
-        if ((cx & 0xC0) != 0x80) {
-            return 0;
-        }
+        if ((cx & 0xC0) != 0x80) return 0;
         cp = (cp << 6) | (u32)(cx & 0x3F);
     }
     *out = cp;
@@ -664,26 +513,16 @@ static size_t read_utf8_codepoint(const char *p, const char *end, u32 *out)
 static size_t utf8_sequence_len(const char *s)
 {
     unsigned char c = (unsigned char)(s ? s[0] : 0);
-    if (c < 0x80) {
-        return c ? 1 : 0;
-    }
-    if ((c & 0xE0) == 0xC0) {
-        return 2;
-    }
-    if ((c & 0xF0) == 0xE0) {
-        return 3;
-    }
-    if ((c & 0xF8) == 0xF0) {
-        return 4;
-    }
+    if (c < 0x80) return c ? 1 : 0;
+    if ((c & 0xE0) == 0xC0) return 2;
+    if ((c & 0xF0) == 0xE0) return 3;
+    if ((c & 0xF8) == 0xF0) return 4;
     return 1;
 }
 
 static void trim_newline(char *s)
 {
-    if (!s) {
-        return;
-    }
+    if (!s) return;
     size_t n = strlen(s);
     while (n && (s[n - 1] == '\n' || s[n - 1] == '\r')) {
         s[--n] = 0;
@@ -692,68 +531,17 @@ static void trim_newline(char *s)
 
 static void trim_edges(char *s)
 {
-    if (!s) {
-        return;
-    }
+    if (!s) return;
     trim_newline(s);
-    while (*s == ' ' || *s == '\t') {
-        memmove(s, s + 1, strlen(s));
-    }
+    while (*s == ' ' || *s == '\t') memmove(s, s + 1, strlen(s));
     size_t n = strlen(s);
-    while (n && (s[n - 1] == ' ' || s[n - 1] == '\t')) {
-        s[--n] = 0;
-    }
+    while (n && (s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = 0;
 }
 
 static void strip_trailing_slash(char *s)
 {
     size_t n = strlen(s);
-    while (n > 0 && s[n - 1] == '/') {
-        s[--n] = 0;
-    }
-}
-
-static bool starts_with_http(const char *s);
-
-static void normalize_server_url(char *s)
-{
-    if (!s || !s[0]) {
-        return;
-    }
-
-    trim_edges(s);
-
-    if (!starts_with_http(s)) {
-        char tmp[320];
-        snprintf(tmp, sizeof(tmp), "http://%s", s);
-        copy_safe(s, 256, tmp);
-    }
-
-    char *q = strchr(s, '?');
-    if (q) {
-        *q = 0;
-    }
-    char *hash = strchr(s, '#');
-    if (hash) {
-        *hash = 0;
-    }
-
-    strip_trailing_slash(s);
-
-    const char *suffixes[] = {
-        "/web/index.html",
-        "/web",
-        "/login.html"
-    };
-    for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); i++) {
-        size_t n = strlen(s);
-        size_t m = strlen(suffixes[i]);
-        if (n >= m && strcmp(s + n - m, suffixes[i]) == 0) {
-            s[n - m] = 0;
-            strip_trailing_slash(s);
-            break;
-        }
-    }
+    while (n > 0 && s[n - 1] == '/') s[--n] = 0;
 }
 
 static bool starts_with_http(const char *s)
@@ -761,39 +549,55 @@ static bool starts_with_http(const char *s)
     return strncmp(s, "http://", 7) == 0 || strncmp(s, "https://", 8) == 0;
 }
 
+static void normalize_server_url(char *s)
+{
+    if (!s || !s[0]) return;
+    trim_edges(s);
+    if (!starts_with_http(s)) {
+        char tmp[320];
+        snprintf(tmp, sizeof(tmp), "http://%s", s);
+        copy_safe(s, 256, tmp);
+    }
+    char *q = strchr(s, '?');
+    if (q) *q = 0;
+    char *hash = strchr(s, '#');
+    if (hash) *hash = 0;
+    strip_trailing_slash(s);
+}
+
+// Updated ensure_defaults to manage Plex's client_identifier
 static void ensure_defaults(void)
 {
     if (!g_cfg.server[0]) {
-        copy_safe(g_cfg.server, sizeof(g_cfg.server), "http://192.168.1.2:8096");
+        copy_safe(g_cfg.server, sizeof(g_cfg.server), "http://192.168.1.2:32400"); // Standard Plex Port
     }
     normalize_server_url(g_cfg.server);
 
-    if (!g_cfg.device_id[0]) {
-        snprintf(g_cfg.device_id, sizeof(g_cfg.device_id), "3dJelly-%08lX", (unsigned long)osGetTime());
+    if (!g_cfg.client_identifier[0]) {
+        snprintf(g_cfg.client_identifier, sizeof(g_cfg.client_identifier), "3dPlex-%08lX", (unsigned long)osGetTime());
     }
     if (!is_supported_quality(g_cfg.quality)) {
         g_cfg.quality = default_quality();
     }
 }
 
+// Updated save_config for Plex
 static void save_config(void)
 {
     mkdir(CONFIG_DIR, 0777);
     FILE *f = fopen(CONFIG_PATH, "w");
-    if (!f) {
-        return;
-    }
+    if (!f) return;
 
     fprintf(f, "server=%s\n", g_cfg.server);
     fprintf(f, "username=%s\n", g_cfg.username);
     fprintf(f, "password=%s\n", g_cfg.password);
     fprintf(f, "token=%s\n", g_cfg.token);
-    fprintf(f, "user_id=%s\n", g_cfg.user_id);
-    fprintf(f, "device_id=%s\n", g_cfg.device_id);
+    fprintf(f, "client_identifier=%s\n", g_cfg.client_identifier);
     fprintf(f, "quality=%d\n", g_cfg.quality);
     fclose(f);
 }
 
+// Updated load_config for Plex
 static void load_config(void)
 {
     memset(&g_cfg, 0, sizeof(g_cfg));
@@ -807,25 +611,15 @@ static void load_config(void)
     while (fgets(line, sizeof(line), f)) {
         trim_newline(line);
         char *eq = strchr(line, '=');
-        if (!eq) {
-            continue;
-        }
+        if (!eq) continue;
         *eq++ = 0;
-        if (strcmp(line, "server") == 0) {
-            copy_safe(g_cfg.server, sizeof(g_cfg.server), eq);
-        } else if (strcmp(line, "username") == 0) {
-            copy_safe(g_cfg.username, sizeof(g_cfg.username), eq);
-        } else if (strcmp(line, "password") == 0) {
-            copy_safe(g_cfg.password, sizeof(g_cfg.password), eq);
-        } else if (strcmp(line, "token") == 0) {
-            copy_safe(g_cfg.token, sizeof(g_cfg.token), eq);
-        } else if (strcmp(line, "user_id") == 0) {
-            copy_safe(g_cfg.user_id, sizeof(g_cfg.user_id), eq);
-        } else if (strcmp(line, "device_id") == 0) {
-            copy_safe(g_cfg.device_id, sizeof(g_cfg.device_id), eq);
-        } else if (strcmp(line, "quality") == 0) {
-            g_cfg.quality = atoi(eq);
-        }
+        
+        if (strcmp(line, "server") == 0) copy_safe(g_cfg.server, sizeof(g_cfg.server), eq);
+        else if (strcmp(line, "username") == 0) copy_safe(g_cfg.username, sizeof(g_cfg.username), eq);
+        else if (strcmp(line, "password") == 0) copy_safe(g_cfg.password, sizeof(g_cfg.password), eq);
+        else if (strcmp(line, "token") == 0) copy_safe(g_cfg.token, sizeof(g_cfg.token), eq);
+        else if (strcmp(line, "client_identifier") == 0) copy_safe(g_cfg.client_identifier, sizeof(g_cfg.client_identifier), eq);
+        else if (strcmp(line, "quality") == 0) g_cfg.quality = atoi(eq);
     }
     fclose(f);
     ensure_defaults();
@@ -834,26 +628,14 @@ static void load_config(void)
 static void json_escape(const char *in, char *out, size_t outsz)
 {
     size_t w = 0;
-    if (!outsz) {
-        return;
-    }
+    if (!outsz) return;
     for (size_t i = 0; in && in[i] && w + 2 < outsz; i++) {
         unsigned char c = (unsigned char)in[i];
-        if (c == '"' || c == '\\') {
-            out[w++] = '\\';
-            out[w++] = (char)c;
-        } else if (c == '\n') {
-            out[w++] = '\\';
-            out[w++] = 'n';
-        } else if (c == '\r') {
-            out[w++] = '\\';
-            out[w++] = 'r';
-        } else if (c == '\t') {
-            out[w++] = '\\';
-            out[w++] = 't';
-        } else if (c >= 0x20) {
-            out[w++] = (char)c;
-        }
+        if (c == '"' || c == '\\') { out[w++] = '\\'; out[w++] = (char)c; }
+        else if (c == '\n') { out[w++] = '\\'; out[w++] = 'n'; }
+        else if (c == '\r') { out[w++] = '\\'; out[w++] = 'r'; }
+        else if (c == '\t') { out[w++] = '\\'; out[w++] = 't'; }
+        else if (c >= 0x20) { out[w++] = (char)c; }
     }
     out[w] = 0;
 }
@@ -862,9 +644,7 @@ static void url_encode(const char *in, char *out, size_t outsz)
 {
     static const char hex[] = "0123456789ABCDEF";
     size_t w = 0;
-    if (!outsz) {
-        return;
-    }
+    if (!outsz) return;
     for (size_t i = 0; in && in[i] && w + 4 < outsz; i++) {
         unsigned char c = (unsigned char)in[i];
         if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
@@ -880,9 +660,7 @@ static void url_encode(const char *in, char *out, size_t outsz)
 
 static const char *skip_ws(const char *p, const char *end)
 {
-    while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) {
-        p++;
-    }
+    while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) p++;
     return p;
 }
 
@@ -896,36 +674,19 @@ static const char *find_key_range(const char *start, const char *end, const char
     for (const char *p = start; p + klen + 2 < end; p++) {
         char c = *p;
         if (in_str) {
-            if (esc) {
-                esc = false;
-            } else if (c == '\\') {
-                esc = true;
-            } else if (c == '"') {
-                in_str = false;
-            }
+            if (esc) esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"') in_str = false;
             continue;
         }
-
-        if (c == '{' || c == '[') {
-            depth++;
-            continue;
-        }
-        if (c == '}' || c == ']') {
-            depth--;
-            continue;
-        }
-
-        if (c != '"') {
-            continue;
-        }
+        if (c == '{' || c == '[') { depth++; continue; }
+        if (c == '}' || c == ']') { depth--; continue; }
+        if (c != '"') continue;
 
         if (depth == 1 && (size_t)(end - p) > klen + 2 && strncmp(p + 1, key, klen) == 0 && p[klen + 1] == '"') {
             const char *q = skip_ws(p + klen + 2, end);
-            if (q < end && *q == ':') {
-                return skip_ws(q + 1, end);
-            }
+            if (q < end && *q == ':') return skip_ws(q + 1, end);
         }
-
         in_str = true;
     }
     return NULL;
@@ -935,55 +696,25 @@ static bool json_get_string_range(const char *start, const char *end, const char
 {
     const char *p = find_key_range(start, end, key);
     if (!p || p >= end || *p != '"') {
-        if (outsz) {
-            out[0] = 0;
-        }
+        if (outsz) out[0] = 0;
         return false;
     }
-
     p++;
     size_t w = 0;
-    if (outsz) {
-        out[0] = 0;
-    }
+    if (outsz) out[0] = 0;
     while (p < end && *p != '"' && w + 1 < outsz) {
         if (*p == '\\' && p + 1 < end) {
             p++;
             switch (*p) {
-            case '"':
-            case '\\':
-            case '/':
-                append_char(out, outsz, &w, *p);
-                p++;
-                continue;
-            case 'b':
-                append_char(out, outsz, &w, '\b');
-                p++;
-                continue;
-            case 'f':
-                append_char(out, outsz, &w, '\f');
-                p++;
-                continue;
-            case 'n':
-                append_char(out, outsz, &w, '\n');
-                p++;
-                continue;
-            case 'r':
-                append_char(out, outsz, &w, '\r');
-                p++;
-                continue;
-            case 't':
-                append_char(out, outsz, &w, '\t');
-                p++;
-                continue;
-            case 'u':
-            {
+            case '"': case '\\': case '/': append_char(out, outsz, &w, *p); p++; continue;
+            case 'b': append_char(out, outsz, &w, '\b'); p++; continue;
+            case 'f': append_char(out, outsz, &w, '\f'); p++; continue;
+            case 'n': append_char(out, outsz, &w, '\n'); p++; continue;
+            case 'r': append_char(out, outsz, &w, '\r'); p++; continue;
+            case 't': append_char(out, outsz, &w, '\t'); p++; continue;
+            case 'u': {
                 u32 cp = 0;
-                if (!read_json_hex4(p + 1, end, &cp)) {
-                    append_char(out, outsz, &w, '?');
-                    p++;
-                    continue;
-                }
+                if (!read_json_hex4(p + 1, end, &cp)) { append_char(out, outsz, &w, '?'); p++; continue; }
                 p += 5;
                 if (cp >= 0xD800 && cp <= 0xDBFF && p + 6 <= end && p[0] == '\\' && p[1] == 'u') {
                     u32 lo = 0;
@@ -992,23 +723,16 @@ static bool json_get_string_range(const char *start, const char *end, const char
                         p += 6;
                     }
                 }
-                if (!append_display_codepoint(out, outsz, &w, cp)) {
-                    append_char(out, outsz, &w, '?');
-                }
+                if (!append_display_codepoint(out, outsz, &w, cp)) append_char(out, outsz, &w, '?');
                 continue;
             }
-            default:
-                append_char(out, outsz, &w, *p);
-                p++;
-                continue;
+            default: append_char(out, outsz, &w, *p); p++; continue;
             }
         } else {
             u32 cp = 0;
             size_t len = read_utf8_codepoint(p, end, &cp);
             if (len > 0) {
-                if (!append_display_codepoint(out, outsz, &w, cp)) {
-                    append_char(out, outsz, &w, '?');
-                }
+                if (!append_display_codepoint(out, outsz, &w, cp)) append_char(out, outsz, &w, '?');
                 p += len;
             } else {
                 append_char(out, outsz, &w, *p);
@@ -1017,35 +741,23 @@ static bool json_get_string_range(const char *start, const char *end, const char
             continue;
         }
     }
-    if (outsz) {
-        out[w] = 0;
-    }
+    if (outsz) out[w] = 0;
     return true;
 }
 
 static bool json_get_bool_range(const char *start, const char *end, const char *key, bool *out)
 {
     const char *p = find_key_range(start, end, key);
-    if (!p) {
-        return false;
-    }
-    if (p + 4 <= end && strncmp(p, "true", 4) == 0) {
-        *out = true;
-        return true;
-    }
-    if (p + 5 <= end && strncmp(p, "false", 5) == 0) {
-        *out = false;
-        return true;
-    }
+    if (!p) return false;
+    if (p + 4 <= end && strncmp(p, "true", 4) == 0) { *out = true; return true; }
+    if (p + 5 <= end && strncmp(p, "false", 5) == 0) { *out = false; return true; }
     return false;
 }
 
 static bool json_get_int_range(const char *start, const char *end, const char *key, int *out)
 {
     const char *p = find_key_range(start, end, key);
-    if (!p) {
-        return false;
-    }
+    if (!p) return false;
     *out = atoi(p);
     return true;
 }
@@ -1053,9 +765,7 @@ static bool json_get_int_range(const char *start, const char *end, const char *k
 static bool json_get_ull_range(const char *start, const char *end, const char *key, unsigned long long *out)
 {
     const char *p = find_key_range(start, end, key);
-    if (!p) {
-        return false;
-    }
+    if (!p) return false;
     *out = strtoull(p, NULL, 10);
     return true;
 }
@@ -1063,10 +773,7 @@ static bool json_get_ull_range(const char *start, const char *end, const char *k
 static bool json_object_range_after(const char *p, const char *end, const char **obj_start, const char **obj_end)
 {
     p = skip_ws(p, end);
-    if (p >= end || *p != '{') {
-        return false;
-    }
-
+    if (p >= end || *p != '{') return false;
     int depth = 0;
     bool in_str = false;
     bool esc = false;
@@ -1074,20 +781,14 @@ static bool json_object_range_after(const char *p, const char *end, const char *
     for (; q < end; q++) {
         char c = *q;
         if (in_str) {
-            if (esc) {
-                esc = false;
-            } else if (c == '\\') {
-                esc = true;
-            } else if (c == '"') {
-                in_str = false;
-            }
+            if (esc) esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"') in_str = false;
             continue;
         }
-        if (c == '"') {
-            in_str = true;
-        } else if (c == '{') {
-            depth++;
-        } else if (c == '}') {
+        if (c == '"') in_str = true;
+        else if (c == '{') depth++;
+        else if (c == '}') {
             depth--;
             if (depth == 0) {
                 *obj_start = p;
@@ -1102,48 +803,33 @@ static bool json_object_range_after(const char *p, const char *end, const char *
 static bool json_get_object_range(const char *start, const char *end, const char *key, const char **obj_start, const char **obj_end)
 {
     const char *p = find_key_range(start, end, key);
-    if (!p) {
-        return false;
-    }
+    if (!p) return false;
     return json_object_range_after(p, end, obj_start, obj_end);
 }
-
 static bool media_item_is_leaf_media_type(const MediaItem *item)
 {
-    if (!item) {
-        return false;
-    }
-    return strcmp(item->type, "Movie") == 0 ||
-           strcmp(item->type, "Episode") == 0 ||
-           strcmp(item->type, "Video") == 0 ||
-           strcmp(item->type, "MusicVideo") == 0;
+    if (!item) return false;
+    return strcmp(item->type, "movie") == 0 ||
+           strcmp(item->type, "episode") == 0 ||
+           strcmp(item->type, "track") == 0 ||
+           strcmp(item->type, "video") == 0;
 }
 
-static bool media_item_is_unowned_placeholder(const MediaItem *item)
-{
-    if (!item) {
-        return true;
-    }
-    if (item->is_missing || item->is_virtual_item || item->is_place_holder) {
-        return true;
-    }
-    if (!item->is_folder && strcmp(item->location_type, "Virtual") == 0) {
-        return true;
-    }
-    if (!item->is_folder && media_item_is_leaf_media_type(item) && item->media_source_count == 0) {
-        return true;
-    }
-    return false;
-}
-
-static bool parse_items(const char *json, MediaItem *items, int *count, bool owned_only)
+// Rewritten to parse Plex's "MediaContainer" -> "Directory" or "Metadata" structure
+static bool parse_items(const char *json, MediaItem *items, int *count)
 {
     const char *end = json + strlen(json);
-    const char *p = find_key_range(json, end, "Items");
+    
+    // Plex returns items in either a "Directory" array (folders/libraries) or "Metadata" array (media)
+    const char *p = find_key_range(json, end, "Directory");
+    if (!p) {
+        p = find_key_range(json, end, "Metadata");
+    }
     if (!p) {
         *count = 0;
         return false;
     }
+    
     p = skip_ws(p, end);
     if (p >= end || *p != '[') {
         *count = 0;
@@ -1154,37 +840,35 @@ static bool parse_items(const char *json, MediaItem *items, int *count, bool own
     int n = 0;
     while (p < end && n < MAX_ITEMS) {
         p = skip_ws(p, end);
-        if (p >= end || *p == ']') {
-            break;
-        }
-        if (*p != '{') {
-            p++;
-            continue;
-        }
+        if (p >= end || *p == ']') break;
+        if (*p != '{') { p++; continue; }
 
         const char *os = NULL;
         const char *oe = NULL;
-        if (!json_object_range_after(p, end, &os, &oe)) {
-            break;
-        }
+        if (!json_object_range_after(p, end, &os, &oe)) break;
 
         MediaItem item;
         memset(&item, 0, sizeof(item));
-        item.media_source_count = -1;
-        json_get_string_range(os, oe, "Id", item.id, sizeof(item.id));
-        json_get_string_range(os, oe, "Name", item.name, sizeof(item.name));
-        json_get_string_range(os, oe, "Type", item.type, sizeof(item.type));
-        json_get_string_range(os, oe, "CollectionType", item.collection_type, sizeof(item.collection_type));
-        json_get_string_range(os, oe, "LocationType", item.location_type, sizeof(item.location_type));
-        json_get_bool_range(os, oe, "IsFolder", &item.is_folder);
-        json_get_bool_range(os, oe, "IsMissing", &item.is_missing);
-        json_get_bool_range(os, oe, "IsVirtualItem", &item.is_virtual_item);
-        json_get_bool_range(os, oe, "IsPlaceHolder", &item.is_place_holder);
-        json_get_int_range(os, oe, "ProductionYear", &item.year);
-        json_get_int_range(os, oe, "MediaSourceCount", &item.media_source_count);
-        json_get_ull_range(os, oe, "RunTimeTicks", &item.runtime_ticks);
+        
+        // Plex maps: ratingKey -> ID, title -> Name
+        if (!json_get_string_range(os, oe, "ratingKey", item.id, sizeof(item.id))) {
+            json_get_string_range(os, oe, "key", item.id, sizeof(item.id)); // Fallback for libraries
+        }
+        json_get_string_range(os, oe, "title", item.name, sizeof(item.name));
+        json_get_string_range(os, oe, "type", item.type, sizeof(item.type));
+        
+        // If it's a show/season/library, it acts as a folder
+        item.is_folder = (strcmp(item.type, "show") == 0 || strcmp(item.type, "season") == 0 || strcmp(item.type, "collection") == 0);
+        
+        json_get_int_range(os, oe, "year", &item.year);
+        
+        // Plex returns duration in milliseconds
+        unsigned long long duration_ms = 0;
+        if (json_get_ull_range(os, oe, "duration", &duration_ms)) {
+            item.runtime_ticks = duration_ms * 10000ULL; // Convert to Jellyfin's 100ns tick format to keep UI math happy
+        }
 
-        if (item.id[0] && item.name[0] && (!owned_only || !media_item_is_unowned_placeholder(&item))) {
+        if (item.id[0] && item.name[0]) {
             items[n++] = item;
         }
         p = oe;
@@ -1202,16 +886,18 @@ static void free_response(HttpResponse *res)
     }
 }
 
-static void auth_header(char *out, size_t outsz, bool include_token)
+// Completely rewritten for Plex Auth Headers
+static void add_plex_headers(httpcContext *context, bool include_token)
 {
+    httpcAddRequestHeaderField(context, "X-Plex-Product", "3dPlex");
+    httpcAddRequestHeaderField(context, "X-Plex-Version", APP_VERSION);
+    httpcAddRequestHeaderField(context, "X-Plex-Client-Identifier", g_cfg.client_identifier);
+    httpcAddRequestHeaderField(context, "X-Plex-Device", "Nintendo 3DS");
+    httpcAddRequestHeaderField(context, "X-Plex-Platform", "Nintendo 3DS");
+    httpcAddRequestHeaderField(context, "Accept", "application/json");
+    
     if (include_token && g_cfg.token[0]) {
-        snprintf(out, outsz,
-                 "MediaBrowser Client=\"3dJelly\", Device=\"Nintendo 3DS\", DeviceId=\"%s\", Version=\"%s\", Token=\"%s\"",
-                 g_cfg.device_id, APP_VERSION, g_cfg.token);
-    } else {
-        snprintf(out, outsz,
-                 "MediaBrowser Client=\"3dJelly\", Device=\"Nintendo 3DS\", DeviceId=\"%s\", Version=\"%s\"",
-                 g_cfg.device_id, APP_VERSION);
+        httpcAddRequestHeaderField(context, "X-Plex-Token", g_cfg.token);
     }
 }
 
@@ -1221,17 +907,11 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
     out->status = 0;
     out->result = 0;
     copy_safe(out->url, sizeof(out->url), url);
-    if (!g_http_ready) {
-        out->result = (Result)0xD9000003;
-        return out->result;
-    }
+    if (!g_http_ready) return (Result)0xD9000003;
 
-    char *active_url = NULL;
+    char *active_url = strdup(url);
     char *redirect_url = NULL;
-    active_url = strdup(url);
-    if (!active_url) {
-        return -1;
-    }
+    if (!active_url) return -1;
 
     Result ret = 0;
     u32 status = 0;
@@ -1242,27 +922,19 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
     for (int redirects = 0; redirects < 4; redirects++) {
         copy_safe(out->url, sizeof(out->url), active_url);
         ret = httpcOpenContext(&context, method, active_url, method == HTTPC_METHOD_POST ? 0 : 1);
-        if (R_FAILED(ret)) {
-            break;
-        }
+        if (R_FAILED(ret)) break;
         context_open = true;
 
         httpcSetSSLOpt(&context, SSLCOPT_DisableVerify);
         httpcSetKeepAlive(&context, HTTPC_KEEPALIVE_DISABLED);
-        httpcAddRequestHeaderField(&context, "User-Agent", "3dJelly/0.2.0 Nintendo 3DS");
-        httpcAddRequestHeaderField(&context, "Accept", "application/json, */*");
+        httpcAddRequestHeaderField(&context, "User-Agent", "3dPlex/0.1.0 Nintendo 3DS");
         httpcAddRequestHeaderField(&context, "Connection", "Close");
 
-        char auth[384];
-        auth_header(auth, sizeof(auth), include_token);
-        httpcAddRequestHeaderField(&context, "Authorization", auth);
-        httpcAddRequestHeaderField(&context, "X-Emby-Authorization", auth);
-        if (include_token && g_cfg.token[0]) {
-            httpcAddRequestHeaderField(&context, "X-Emby-Token", g_cfg.token);
-        }
+        // Swap Jellyfin headers for Plex headers
+        add_plex_headers(&context, include_token);
 
-        if (body) {
-            httpcAddRequestHeaderField(&context, "Content-Type", "application/json");
+        if (body && method == HTTPC_METHOD_POST) {
+            httpcAddRequestHeaderField(&context, "Content-Type", "application/x-www-form-urlencoded");
             ret = httpcAddPostDataRaw(&context, (u32 *)body, strlen(body));
             if (R_FAILED(ret)) {
                 httpcCancelConnection(&context);
@@ -1296,32 +968,18 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
         }
 
         if ((status >= 301 && status <= 303) || (status >= 307 && status <= 308)) {
-            if (!redirect_url) {
-                redirect_url = (char *)malloc(1024);
-            }
-            if (!redirect_url) {
-                ret = -1;
-                httpcCancelConnection(&context);
-                httpcCloseContext(&context);
-                context_open = false;
-                break;
-            }
+            if (!redirect_url) redirect_url = (char *)malloc(1024);
+            if (!redirect_url) { ret = -1; break; }
             memset(redirect_url, 0, 1024);
             ret = httpcGetResponseHeader(&context, "Location", redirect_url, 1024);
             httpcCancelConnection(&context);
             httpcCloseContext(&context);
             context_open = false;
-            if (R_FAILED(ret) || !redirect_url[0]) {
-                break;
-            }
-            char full[STREAM_URL_CAP];
-            build_url(full, sizeof(full), redirect_url);
+            if (R_FAILED(ret) || !redirect_url[0]) break;
+            
             free(active_url);
-            active_url = strdup(full);
-            if (!active_url) {
-                ret = -1;
-                break;
-            }
+            active_url = strdup(redirect_url);
+            if (!active_url) { ret = -1; break; }
             continue;
         }
         break;
@@ -1337,18 +995,12 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
             size_t size = 0;
             u32 readsize = 0;
             do {
-                if (size + 4096 + 1 > HTTP_CAP) {
-                    ret = -3;
-                    break;
-                }
+                if (size + 4096 + 1 > HTTP_CAP) { ret = -3; break; }
                 ret = httpcDownloadData(&context, (u8 *)buf + size, 4096, &readsize);
                 size += readsize;
                 if (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING) {
                     char *next = (char *)realloc(buf, size + 4096 + 1);
-                    if (!next) {
-                        ret = -1;
-                        break;
-                    }
+                    if (!next) { ret = -1; break; }
                     buf = next;
                 }
             } while (ret == (s32)HTTPC_RESULTCODE_DOWNLOADPENDING);
@@ -1364,9 +1016,7 @@ static Result http_request_full(HTTPC_RequestMethod method, const char *url, con
     }
 
     if (context_open) {
-        if (R_FAILED(ret)) {
-            httpcCancelConnection(&context);
-        }
+        if (R_FAILED(ret)) httpcCancelConnection(&context);
         httpcCloseContext(&context);
     }
     free(active_url);
@@ -1399,58 +1049,20 @@ static Result api_post(const char *path, const char *body, bool include_token, H
     return http_request_full(HTTPC_METHOD_POST, url, body, include_token, out);
 }
 
-static Result api_delete(const char *path, HttpResponse *out)
-{
-    char url[768];
-    build_url(url, sizeof(url), path);
-    return http_request_full(HTTPC_METHOD_DELETE, url, NULL, true, out);
-}
-
-static void stop_active_encoding(void)
-{
-    if (!g_cfg.device_id[0] || !g_play_session[0]) {
-        return;
-    }
-
-    char device[160];
-    char session[160];
-    char path[384];
-    url_encode(g_cfg.device_id, device, sizeof(device));
-    url_encode(g_play_session, session, sizeof(session));
-    snprintf(path, sizeof(path), "/Videos/ActiveEncodings?DeviceId=%s&PlaySessionId=%s", device, session);
-
-    HttpResponse res;
-    Result ret = api_delete(path, &res);
-    if (R_FAILED(ret) && res.status != 404) {
-        set_status("Transcode refresh returned HTTP %lu result 0x%08lX.", (unsigned long)res.status, (unsigned long)ret);
-    }
-    free_response(&res);
-}
-
 static void set_http_failure(const char *prefix, const HttpResponse *res, Result ret)
 {
-    if (res->status == HTTP_STATUS_NONE) {
-        set_status("%s: no HTTP response. Check URL/WiFi: %.72s", prefix, res->url);
-    } else if (ret == (Result)HTTPC_RESULTCODE_TIMEDOUT) {
-        set_status("%s: timed out waiting for Jellyfin.", prefix);
-    } else if (res->status == 401) {
-        set_status("%s: HTTP 401. Check username/password.", prefix);
-    } else {
-        set_status("%s: HTTP %lu result 0x%08lX", prefix, (unsigned long)res->status, (unsigned long)ret);
-    }
+    if (res->status == HTTP_STATUS_NONE) set_status("%s: no HTTP response. Check URL/WiFi: %.72s", prefix, res->url);
+    else if (ret == (Result)HTTPC_RESULTCODE_TIMEDOUT) set_status("%s: timed out waiting for Plex.", prefix);
+    else if (res->status == 401) set_status("%s: HTTP 401. Check username/password.", prefix);
+    else set_status("%s: HTTP %lu result 0x%08lX", prefix, (unsigned long)res->status, (unsigned long)ret);
 }
 
 static void format_http_failure(char *out, size_t outsz, const char *prefix, const HttpResponse *res, Result ret)
 {
-    if (res->status == HTTP_STATUS_NONE) {
-        snprintf(out, outsz, "%s: no HTTP response. Check URL/WiFi.", prefix);
-    } else if (ret == (Result)HTTPC_RESULTCODE_TIMEDOUT) {
-        snprintf(out, outsz, "%s: timed out waiting for Jellyfin.", prefix);
-    } else if (res->status == 401) {
-        snprintf(out, outsz, "%s: HTTP 401. Check username/password.", prefix);
-    } else {
-        snprintf(out, outsz, "%s: HTTP %lu result 0x%08lX", prefix, (unsigned long)res->status, (unsigned long)ret);
-    }
+    if (res->status == HTTP_STATUS_NONE) snprintf(out, outsz, "%s: no HTTP response. Check URL/WiFi.", prefix);
+    else if (ret == (Result)HTTPC_RESULTCODE_TIMEDOUT) snprintf(out, outsz, "%s: timed out waiting for Plex.", prefix);
+    else if (res->status == 401) snprintf(out, outsz, "%s: HTTP 401. Check username/password.", prefix);
+    else snprintf(out, outsz, "%s: HTTP %lu result 0x%08lX", prefix, (unsigned long)res->status, (unsigned long)ret);
 }
 
 static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool password)
@@ -1463,118 +1075,114 @@ static bool edit_text(const char *hint, char *buffer, size_t bufsz, bool passwor
     swkbdSetFeatures(&kb, SWKBD_DARKEN_TOP_SCREEN | SWKBD_ALLOW_HOME | SWKBD_ALLOW_RESET | SWKBD_ALLOW_POWER);
     swkbdSetButton(&kb, SWKBD_BUTTON_LEFT, "Cancel", false);
     swkbdSetButton(&kb, SWKBD_BUTTON_RIGHT, "OK", true);
-    if (password) {
-        swkbdSetPasswordMode(&kb, SWKBD_PASSWORD_HIDE_DELAY);
-    }
+    if (password) swkbdSetPasswordMode(&kb, SWKBD_PASSWORD_HIDE_DELAY);
 
     SwkbdButton button = swkbdInputText(&kb, buffer, bufsz);
-    if (password) {
-        trim_newline(buffer);
-    } else {
-        trim_edges(buffer);
-    }
+    if (password) trim_newline(buffer);
+    else trim_edges(buffer);
     return button == SWKBD_BUTTON_RIGHT;
 }
 
-static bool login_jellyfin(void)
+// Rewritten Plex Login Flow
+static bool login_plex(void)
 {
-    if (!starts_with_http(g_cfg.server) || !g_cfg.username[0]) {
-        set_status("Set server and username first.");
+    if (!g_cfg.username[0] || !g_cfg.password[0]) {
+        set_status("Set username and password first.");
         return false;
     }
 
     char user[192];
     char pass[192];
-    json_escape(g_cfg.username, user, sizeof(user));
-    json_escape(g_cfg.password, pass, sizeof(pass));
+    url_encode(g_cfg.username, user, sizeof(user));
+    url_encode(g_cfg.password, pass, sizeof(pass));
 
     char body[512];
-    snprintf(body, sizeof(body), "{\"Username\":\"%s\",\"Pw\":\"%s\"}", user, pass);
+    snprintf(body, sizeof(body), "user%%5Blogin%%5D=%s&user%%5Bpassword%%5D=%s", user, pass);
 
     HttpResponse res;
-    set_status("Logging in...");
-    Result ret = api_post("/Users/AuthenticateByName", body, false, &res);
+    set_status("Logging into Plex.tv...");
+    
+    // Plex uses a central auth server
+    Result ret = http_request_full(HTTPC_METHOD_POST, "https://plex.tv/users/sign_in.json", body, false, &res);
     if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
-        set_http_failure("Login failed", &res, ret);
+        set_http_failure("Plex login failed", &res, ret);
         free_response(&res);
         return false;
     }
 
     const char *end = res.body + res.size;
-    bool ok = json_get_string_range(res.body, end, "AccessToken", g_cfg.token, sizeof(g_cfg.token));
     const char *user_obj = NULL;
     const char *user_end = NULL;
-    if (json_get_object_range(res.body, end, "User", &user_obj, &user_end)) {
-        json_get_string_range(user_obj, user_end, "Id", g_cfg.user_id, sizeof(g_cfg.user_id));
+    
+    bool ok = false;
+    if (json_get_object_range(res.body, end, "user", &user_obj, &user_end)) {
+        ok = json_get_string_range(user_obj, user_end, "authentication_token", g_cfg.token, sizeof(g_cfg.token));
     }
 
     free_response(&res);
-    if (!ok || !g_cfg.token[0] || !g_cfg.user_id[0]) {
-        set_status("Login response was missing token/user id.");
+    if (!ok || !g_cfg.token[0]) {
+        set_status("Login response was missing auth token.");
         return false;
     }
 
+    // Clear password from memory after successful token generation
+    memset(g_cfg.password, 0, sizeof(g_cfg.password));
     save_config();
-    set_status("Logged in as %s.", g_cfg.username);
+    set_status("Logged into Plex successfully!");
     return true;
 }
 
+// Rewritten to fetch Plex Libraries
 static bool load_libraries(void)
 {
-    if (!g_cfg.token[0] || !g_cfg.user_id[0]) {
-        return false;
-    }
-
-    char path[256];
-    snprintf(path, sizeof(path), "/Users/%s/Views?Fields=PrimaryImageAspectRatio", g_cfg.user_id);
+    if (!g_cfg.token[0]) return false;
 
     HttpResponse res;
-    Result ret = api_get(path, &res);
+    // Plex endpoint for fetching root libraries
+    Result ret = api_get("/library/sections", &res);
     if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
         set_http_failure("Could not load libraries", &res, ret);
         free_response(&res);
         return false;
     }
 
-    parse_items(res.body, g_libraries, &g_library_count, false);
+    parse_items(res.body, g_libraries, &g_library_count);
     free_response(&res);
+    
     g_selected = 0;
     g_scroll = 0;
     g_stack_depth = 0;
     g_current_parent_id[0] = 0;
-    copy_safe(g_screen_title, sizeof(g_screen_title), "Libraries");
+    copy_safe(g_screen_title, sizeof(g_screen_title), "Plex Libraries");
     g_view = VIEW_LIBRARIES;
-    set_status("Loaded %d libraries.", g_library_count);
+    set_status("Loaded %d Plex libraries.", g_library_count);
     return true;
 }
 
+// Rewritten to fetch items inside a Plex Library or Folder
 static bool load_items_for_parent(const char *parent_id, const char *title)
 {
     char path[512];
-    char enc_parent[160];
-    url_encode(parent_id, enc_parent, sizeof(enc_parent));
-    snprintf(path, sizeof(path),
-             "/Items?UserId=%s&ParentId=%s&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=false&Fields=Path,MediaSources&IsMissing=false&IsUnaired=false",
-             g_cfg.user_id, enc_parent, MAX_ITEMS);
+    
+    // If it's a root library, we fetch its children. Otherwise we query the metadata children.
+    if (strchr(parent_id, '/') == NULL) {
+        snprintf(path, sizeof(path), "/library/sections/%s/all", parent_id);
+    } else {
+        snprintf(path, sizeof(path), "%s/children", parent_id);
+    }
 
     HttpResponse res;
     set_status("Loading %s...", title && title[0] ? title : "items");
     Result ret = api_get(path, &res);
-    if ((R_FAILED(ret) || res.status == HTTP_STATUS_NONE) && parent_id[0]) {
-        free_response(&res);
-        snprintf(path, sizeof(path),
-                 "/Users/%s/Items?ParentId=%s&Limit=%d&Recursive=false&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=false&Fields=Path,MediaSources&IsMissing=false&IsUnaired=false",
-                 g_cfg.user_id, enc_parent, MAX_ITEMS);
-        ret = api_get(path, &res);
-    }
     if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
         set_http_failure("Could not load items", &res, ret);
         free_response(&res);
         return false;
     }
 
-    parse_items(res.body, g_items, &g_item_count, true);
+    parse_items(res.body, g_items, &g_item_count);
     free_response(&res);
+    
     g_selected = 0;
     g_scroll = 0;
     copy_safe(g_current_parent_id, sizeof(g_current_parent_id), parent_id);
@@ -1586,24 +1194,14 @@ static bool load_items_for_parent(const char *parent_id, const char *title)
 
 static bool is_playable(const MediaItem *item)
 {
-    if (media_item_is_unowned_placeholder(item)) {
-        return false;
-    }
-    if (strcmp(item->type, "Audio") == 0) {
-        return false;
-    }
-    return strcmp(item->type, "Movie") == 0 ||
-           strcmp(item->type, "Episode") == 0 ||
-           strcmp(item->type, "Video") == 0 ||
-           strcmp(item->type, "MusicVideo") == 0 ||
-           (!item->is_folder && item->id[0]);
+    if (!item) return false;
+    // For Plex, movies and episodes are directly playable
+    return strcmp(item->type, "movie") == 0 || strcmp(item->type, "episode") == 0;
 }
 
 static void push_nav(const char *parent_id, const char *title)
 {
-    if (g_stack_depth >= MAX_STACK) {
-        return;
-    }
+    if (g_stack_depth >= MAX_STACK) return;
     copy_safe(g_stack[g_stack_depth].parent_id, sizeof(g_stack[g_stack_depth].parent_id), parent_id);
     copy_safe(g_stack[g_stack_depth].title, sizeof(g_stack[g_stack_depth].title), title);
     g_stack[g_stack_depth].selected = g_selected;
@@ -1617,269 +1215,88 @@ static void pop_nav(void)
         load_libraries();
         return;
     }
-
     NavFrame f = g_stack[--g_stack_depth];
-    if (f.parent_id[0]) {
-        load_items_for_parent(f.parent_id, f.title);
-    } else {
-        load_libraries();
-    }
+    if (f.parent_id[0]) load_items_for_parent(f.parent_id, f.title);
+    else load_libraries();
+    
     g_selected = f.selected;
     g_scroll = f.scroll;
 }
 
 static void append_query(char *url, size_t urlsz, const char *query)
 {
-    if (strlen(url) + strlen(query) + 2 >= urlsz) {
-        return;
-    }
+    if (strlen(url) + strlen(query) + 2 >= urlsz) return;
     strcat(url, strchr(url, '?') ? "&" : "?");
     strcat(url, query);
 }
-
+// Rewritten to use Plex's Universal Transcoder for New3DS Hardware H.264
 static void build_fallback_stream_url(const MediaItem *item, char *out, size_t outsz)
 {
     QualityProfile q = quality_profile();
-    char id[160];
-    char token[256];
-    char dev[160];
-    char media_source[192];
-    char session[160];
-    char media_q[224] = "";
-    char session_q[192] = "";
-    url_encode(item->id, id, sizeof(id));
-    url_encode(g_cfg.token, token, sizeof(token));
-    url_encode(g_cfg.device_id, dev, sizeof(dev));
-    url_encode(g_play_media_source_id, media_source, sizeof(media_source));
-    url_encode(g_play_session, session, sizeof(session));
-    if (media_source[0]) {
-        snprintf(media_q, sizeof(media_q), "&MediaSourceId=%s", media_source);
-    }
-    if (session[0]) {
-        snprintf(session_q, sizeof(session_q), "&PlaySessionId=%s", session);
-    }
+    char enc_key[256];
+    char enc_client[128];
+    url_encode(item->id, enc_key, sizeof(enc_key));
+    url_encode(g_cfg.client_identifier, enc_client, sizeof(enc_client));
+    
+    // Plex's universal transcoder can output a raw .ts stream matching the hardware decoder's needs
     snprintf(out, outsz,
-             "%s/Videos/%s/stream?Container=ts&DeviceId=%s%s%s&VideoCodec=h264&AudioCodec=aac&VideoBitrate=%d&AudioBitrate=%d&MaxWidth=%d&MaxHeight=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&TranscodingMaxAudioChannels=2&RequireAvc=true&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&ApiKey=%s",
-             g_cfg.server, id, dev, media_q, session_q, q.video_bitrate, q.audio_bitrate, q.width, q.height, q.max_fps, token);
+             "%s/video/:/transcode/universal/start.ts?path=%s&mediaIndex=0&partIndex=0&protocol=http"
+             "&fastSeek=1&directPlay=0&directStream=0&videoQuality=100&videoResolution=%dx%d"
+             "&maxVideoBitrate=%d&videoCodec=h264&audioCodec=aac&audioChannels=2"
+             "&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
+             g_cfg.server, enc_key, q.width, q.height, (q.video_bitrate / 1000),
+             enc_client, g_cfg.token);
 }
 
+// Rewritten to use Plex's transcoder for Old3DS Software MJPEG fallback
 static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outsz, bool avi_container, u64 start_time_ticks)
 {
     QualityProfile q = quality_profile();
     int fps = mjpeg_target_fps();
-    int bitrate = mjpeg_target_bitrate();
-    char id[160];
-    char token[256];
-    char dev[160];
-    char media_source[192];
-    char session[160];
-    char media_q[224] = "";
-    char session_q[192] = "";
-    char start_q[96] = "";
-    char refresh_q[96] = "";
-    url_encode(item->id, id, sizeof(id));
-    url_encode(g_cfg.token, token, sizeof(token));
-    url_encode(g_cfg.device_id, dev, sizeof(dev));
-    url_encode(g_play_media_source_id, media_source, sizeof(media_source));
-    url_encode(g_play_session, session, sizeof(session));
-    if (media_source[0]) {
-        snprintf(media_q, sizeof(media_q), "&MediaSourceId=%s", media_source);
-    }
-    if (session[0]) {
-        snprintf(session_q, sizeof(session_q), "&PlaySessionId=%s", session);
-    }
-    if (start_time_ticks > 0) {
-        snprintf(start_q, sizeof(start_q), "&StartTimeTicks=%llu", (unsigned long long)start_time_ticks);
-    }
-    snprintf(refresh_q, sizeof(refresh_q), "&3dJellyQuality=%d&3dJellySwitch=%lu", g_cfg.quality, (unsigned long)g_stream_switch_serial);
+    char enc_key[256];
+    char enc_client[128];
+    url_encode(item->id, enc_key, sizeof(enc_key));
+    url_encode(g_cfg.client_identifier, enc_client, sizeof(enc_client));
+    
+    unsigned long long offset_seconds = start_time_ticks / TICKS_PER_SECOND;
+
     if (avi_container) {
         snprintf(out, outsz,
-                 "%s/Videos/%s/stream?Container=avi&DeviceId=%s%s%s%s%s&VideoCodec=mjpeg&AudioCodec=pcm_s16le&VideoBitRate=%d&AudioBitRate=%d&AudioSampleRate=%d&AudioChannels=1&MaxAudioChannels=1&TranscodingMaxAudioChannels=1&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported,AudioCodecNotSupported&ApiKey=%s",
-                 g_cfg.server, id, dev, media_q, session_q, start_q, refresh_q, bitrate, AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * 16, AUDIO_SAMPLE_RATE, q.width, q.height, q.width, q.height, fps, fps, token);
+                 "%s/video/:/transcode/universal/start.avi?path=%s&mediaIndex=0&partIndex=0&protocol=http"
+                 "&offset=%llu&fastSeek=1&directPlay=0&directStream=0&videoQuality=100&videoResolution=%dx%d"
+                 "&maxVideoBitrate=%d&videoCodec=mjpeg&audioCodec=pcm_s16le&audioChannels=1&audioSampleRate=%d"
+                 "&videoFramerate=%d&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
+                 g_cfg.server, enc_key, offset_seconds, q.width, q.height, (mjpeg_target_bitrate() / 1000),
+                 AUDIO_SAMPLE_RATE, fps, enc_client, g_cfg.token);
     } else {
+        // Raw MJPEG fallback
         snprintf(out, outsz,
-                 "%s/Videos/%s/stream?Container=mjpeg&DeviceId=%s%s%s%s%s&VideoCodec=mjpeg&VideoBitRate=%d&Width=%d&Height=%d&MaxWidth=%d&MaxHeight=%d&Framerate=%d&MaxFramerate=%d&Static=false&EnableAutoStreamCopy=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false&SubtitleMethod=Encode&Context=Streaming&TranscodeReasons=ContainerNotSupported,VideoCodecNotSupported&ApiKey=%s",
-                 g_cfg.server, id, dev, media_q, session_q, start_q, refresh_q, bitrate, q.width, q.height, q.width, q.height, fps, fps, token);
+                 "%s/video/:/transcode/universal/start.mjpeg?path=%s&mediaIndex=0&partIndex=0&protocol=http"
+                 "&offset=%llu&fastSeek=1&directPlay=0&directStream=0&videoQuality=100&videoResolution=%dx%d"
+                 "&maxVideoBitrate=%d&videoCodec=mjpeg&videoFramerate=%d"
+                 "&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
+                 g_cfg.server, enc_key, offset_seconds, q.width, q.height, (mjpeg_target_bitrate() / 1000),
+                 fps, enc_client, g_cfg.token);
     }
-}
-
-static void normalize_transcode_url(char *url, size_t urlsz)
-{
-    if (!url[0]) {
-        return;
-    }
-
-    char full[STREAM_URL_CAP];
-    if (starts_with_http(url)) {
-        copy_safe(full, sizeof(full), url);
-    } else {
-        snprintf(full, sizeof(full), "%s%s%s", g_cfg.server, url[0] == '/' ? "" : "/", url);
-    }
-    copy_safe(url, urlsz, full);
-
-    QualityProfile q = quality_profile();
-    char query[256];
-    if (!strstr(url, "MaxWidth=") && !strstr(url, "maxWidth=")) {
-        snprintf(query, sizeof(query), "MaxWidth=%d&MaxHeight=%d", q.width, q.height);
-        append_query(url, urlsz, query);
-    }
-    if (!strstr(url, "VideoBitrate=") && !strstr(url, "videoBitRate=")) {
-        snprintf(query, sizeof(query), "VideoBitrate=%d&AudioBitrate=%d", q.video_bitrate, q.audio_bitrate);
-        append_query(url, urlsz, query);
-    }
-    if (!strstr(url, "MaxFramerate=") && !strstr(url, "maxFramerate=")) {
-        snprintf(query, sizeof(query), "MaxFramerate=%d", q.max_fps);
-        append_query(url, urlsz, query);
-    }
-    if (!strstr(url, "RequireAvc=") && !strstr(url, "requireAvc=")) {
-        append_query(url, urlsz, "RequireAvc=true");
-    }
-    if (g_play_media_source_id[0] && !strstr(url, "MediaSourceId=") && !strstr(url, "mediaSourceId=")) {
-        char enc[192];
-        char query[224];
-        url_encode(g_play_media_source_id, enc, sizeof(enc));
-        snprintf(query, sizeof(query), "MediaSourceId=%s", enc);
-        append_query(url, urlsz, query);
-    }
-    if (g_play_session[0] && !strstr(url, "PlaySessionId=") && !strstr(url, "playSessionId=")) {
-        char enc[160];
-        char query[192];
-        url_encode(g_play_session, enc, sizeof(enc));
-        snprintf(query, sizeof(query), "PlaySessionId=%s", enc);
-        append_query(url, urlsz, query);
-    }
-}
-
-static void build_playback_body(char *out, size_t outsz, u64 start_time_ticks)
-{
-    QualityProfile q = quality_profile();
-    char quality_label[16];
-    format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
-    start_time_ticks = clamp_media_ticks(start_time_ticks);
-    snprintf(out, outsz,
-        "{"
-        "\"UserId\":\"%s\","
-        "\"StartTimeTicks\":%llu,"
-        "\"MaxStreamingBitrate\":%d,"
-        "\"MaxAudioChannels\":2,"
-        "\"SubtitleStreamIndex\":-1,"
-        "\"EnableDirectPlay\":false,"
-        "\"EnableDirectStream\":false,"
-        "\"EnableTranscoding\":true,"
-        "\"AllowVideoStreamCopy\":false,"
-        "\"AllowAudioStreamCopy\":false,"
-        "\"AlwaysBurnInSubtitleWhenTranscoding\":true,"
-        "\"DeviceProfile\":{"
-            "\"Name\":\"3dJelly %s\","
-            "\"MaxStreamingBitrate\":%d,"
-            "\"MaxStaticBitrate\":%d,"
-            "\"MusicStreamingTranscodingBitrate\":96000,"
-            "\"DirectPlayProfiles\":[],"
-            "\"TranscodingProfiles\":[{"
-                "\"Container\":\"ts\","
-                "\"Type\":\"Video\","
-                "\"VideoCodec\":\"h264\","
-                "\"AudioCodec\":\"aac\","
-                "\"Protocol\":\"http\","
-                "\"Context\":\"Streaming\","
-                "\"MaxAudioChannels\":\"2\","
-                "\"MinSegments\":1,"
-                "\"EstimateContentLength\":false"
-            "}],"
-            "\"ContainerProfiles\":[],"
-            "\"CodecProfiles\":["
-                "{\"Type\":\"Video\",\"Conditions\":["
-                    "{\"Condition\":\"LessThanEqual\",\"Property\":\"Width\",\"Value\":\"%d\",\"IsRequired\":true},"
-                    "{\"Condition\":\"LessThanEqual\",\"Property\":\"Height\",\"Value\":\"%d\",\"IsRequired\":true},"
-                    "{\"Condition\":\"LessThanEqual\",\"Property\":\"VideoBitrate\",\"Value\":\"%d\",\"IsRequired\":true},"
-                    "{\"Condition\":\"LessThanEqual\",\"Property\":\"VideoFramerate\",\"Value\":\"%d\",\"IsRequired\":true}"
-                "]},"
-                "{\"Type\":\"Audio\",\"Conditions\":["
-                    "{\"Condition\":\"LessThanEqual\",\"Property\":\"AudioChannels\",\"Value\":\"2\",\"IsRequired\":true},"
-                    "{\"Condition\":\"LessThanEqual\",\"Property\":\"AudioBitrate\",\"Value\":\"%d\",\"IsRequired\":true}"
-                "]}"
-            "],"
-            "\"SubtitleProfiles\":[]"
-        "}"
-        "}",
-        g_cfg.user_id, (unsigned long long)start_time_ticks, q.video_bitrate + q.audio_bitrate, quality_label,
-        q.video_bitrate + q.audio_bitrate, q.video_bitrate + q.audio_bitrate,
-        q.width, q.height, q.video_bitrate, q.max_fps, q.audio_bitrate);
-}
-
-static void set_play_status(const char *fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(g_play_status, sizeof(g_play_status), fmt, ap);
-    va_end(ap);
-    set_status("%s", g_play_status);
 }
 
 static bool request_playback_info(u64 start_time_ticks)
 {
-    char path[256];
-    char body[4096];
-    char enc_id[128];
-    url_encode(g_current.id, enc_id, sizeof(enc_id));
-    snprintf(path, sizeof(path), "/Items/%s/PlaybackInfo?UserId=%s", enc_id, g_cfg.user_id);
-    build_playback_body(body, sizeof(body), start_time_ticks);
-
-    g_play_url[0] = 0;
-    g_play_method[0] = 0;
-    g_play_media_source_id[0] = 0;
-    g_play_session[0] = 0;
-
-    HttpResponse res;
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
-    snprintf(g_play_status, sizeof(g_play_status), "Requesting %s playback session...", quality_label);
+    
+    snprintf(g_play_status, sizeof(g_play_status), "Requesting %s Plex session...", quality_label);
     set_status("%s", g_play_status);
-    Result ret = api_post(path, body, true, &res);
-    if (R_FAILED(ret) || res.status < 200 || res.status >= 300 || !res.body) {
-        format_http_failure(g_play_status, sizeof(g_play_status), "PlaybackInfo failed", &res, ret);
-        set_status("%s", g_play_status);
-        free_response(&res);
-        return false;
-    }
 
-    const char *end = res.body + res.size;
-    json_get_string_range(res.body, end, "PlaySessionId", g_play_session, sizeof(g_play_session));
+    // Plex doesn't require a complex POST for PlaybackInfo like Jellyfin does. 
+    // We can just build the transcoder URL directly based on the media type.
+    g_play_url[0] = 0;
+    g_play_method[0] = 0;
+    
+    build_fallback_stream_url(&g_current, g_play_url, sizeof(g_play_url));
+    copy_safe(g_play_method, sizeof(g_play_method), "plex-ts-transcode");
 
-    const char *arr = find_key_range(res.body, end, "MediaSources");
-    const char *src_start = NULL;
-    const char *src_end = NULL;
-    if (arr) {
-        arr = skip_ws(arr, end);
-        if (arr < end && *arr == '[') {
-            json_object_range_after(arr + 1, end, &src_start, &src_end);
-        }
-    }
-
-    bool supports_transcoding = false;
-    bool supports_direct = false;
-    if (src_start && src_end) {
-        json_get_string_range(src_start, src_end, "Id", g_play_media_source_id, sizeof(g_play_media_source_id));
-        json_get_string_range(src_start, src_end, "TranscodingUrl", g_play_url, sizeof(g_play_url));
-        json_get_string_range(src_start, src_end, "TranscodingContainer", g_play_method, sizeof(g_play_method));
-        json_get_bool_range(src_start, src_end, "SupportsTranscoding", &supports_transcoding);
-        json_get_bool_range(src_start, src_end, "SupportsDirectPlay", &supports_direct);
-    }
-
-    if (!g_play_url[0]) {
-        build_fallback_stream_url(&g_current, g_play_url, sizeof(g_play_url));
-        copy_safe(g_play_method, sizeof(g_play_method), "manual-ts");
-    } else {
-        normalize_transcode_url(g_play_url, sizeof(g_play_url));
-    }
-
-    free_response(&res);
-
-    snprintf(g_play_status, sizeof(g_play_status),
-             "%s session OK. Transcode:%s Direct:%s",
-             quality_label,
-             supports_transcoding ? "yes" : "no",
-             supports_direct ? "yes" : "no");
+    snprintf(g_play_status, sizeof(g_play_status), "%s Transcode session ready.", quality_label);
     set_status("%s", g_play_status);
     return true;
 }
@@ -1905,7 +1322,7 @@ static void player_console(const StreamPlayer *player, const char *line)
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
     consoleClear();
-    printf("3dJelly player\n");
+    printf("3dPlex player\n");
     printf("%s\n\n", g_current.name[0] ? g_current.name : "Video");
     printf("%s\n\n", line ? line : "");
     printf("Quality: %s\n", quality_label);
@@ -1925,17 +1342,11 @@ static Result add_stream_headers(httpcContext *context)
         return ret;
     }
     httpcSetKeepAlive(context, HTTPC_KEEPALIVE_DISABLED);
-    httpcAddRequestHeaderField(context, "User-Agent", "3dJelly/0.2.0 Nintendo 3DS");
+    httpcAddRequestHeaderField(context, "User-Agent", "3dPlex/0.1.0 Nintendo 3DS");
     httpcAddRequestHeaderField(context, "Accept", "video/mp2t, multipart/x-mixed-replace, image/jpeg, audio/wav, audio/*, */*");
     httpcAddRequestHeaderField(context, "Connection", "Close");
 
-    char auth[384];
-    auth_header(auth, sizeof(auth), true);
-    httpcAddRequestHeaderField(context, "Authorization", auth);
-    httpcAddRequestHeaderField(context, "X-Emby-Authorization", auth);
-    if (g_cfg.token[0]) {
-        httpcAddRequestHeaderField(context, "X-Emby-Token", g_cfg.token);
-    }
+    add_plex_headers(context, true);
     return 0;
 }
 
@@ -3507,7 +2918,7 @@ static void draw_playback_bottom_ui(const MjpegPlayer *player, const char *line)
     bottom_fill_rect(fb, 12, 16, 296, 1, 48, 53, 65);
     bottom_stroke_rect(fb, 12, 16, 296, 88, 42, 47, 59);
     bottom_fill_rect(fb, 22, 28, 68, 14, 55, 206, 224);
-    bottom_draw_text_centered(fb, 56, 32, "3DJELLY", 1, 10, 14, 18);
+    bottom_draw_text_centered(fb, 56, 32, "3dPlex", 1, 10, 14, 18);
 
     bool paused = player && player->paused;
     int badge_w = paused ? 70 : 78;
@@ -4101,7 +3512,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
         return MJPEG_PLAY_FAILED;
     }
 
-    mjpeg_console(&player, "Opening Jellyfin MJPEG stream...");
+    mjpeg_console(&player, "Opening Plex MJPEG stream...");
 
     httpcContext context;
     u32 status = HTTP_STATUS_NONE;
@@ -4254,7 +3665,7 @@ static MjpegPlayResult play_mjpeg_stream_url(const char *url, bool avi_container
     }
 
     if (!app_system_closing() && result == MJPEG_PLAY_RESTART) {
-        stop_active_encoding();
+        // Plex transcoder stop isn't explicitly needed here, but keeping a brief sleep
         svcSleepThread(120000000ULL);
     }
 
@@ -4358,15 +3769,12 @@ static bool probe_playback(void)
     return true;
 }
 
+
 static void clipped_name(const char *src, char *out, size_t outsz, size_t max_chars)
 {
-    if (!outsz) {
-        return;
-    }
+    if (!outsz) return;
     out[0] = 0;
-    if (!src) {
-        return;
-    }
+    if (!src) return;
 
     size_t w = 0;
     size_t chars = 0;
@@ -4374,18 +3782,14 @@ static void clipped_name(const char *src, char *out, size_t outsz, size_t max_ch
     const char *p = src;
     while (*p && chars < max_chars) {
         size_t len = utf8_sequence_len(p);
-        if (!len || w + len > limit) {
-            break;
-        }
+        if (!len || w + len > limit) break;
         memcpy(out + w, p, len);
         w += len;
         p += len;
         chars++;
     }
     out[w] = 0;
-    if (*p && outsz > 4) {
-        strcat(out, "...");
-    }
+    if (*p && outsz > 4) strcat(out, "...");
 }
 
 static void draw_text(float x, float y, float scale, u32 color, const char *fmt, ...)
@@ -4430,7 +3834,6 @@ static void draw_text_centered(float center_x, float y, float scale, u32 color, 
     float width = 0.0f;
     float height = 0.0f;
     C2D_TextGetDimensions(&t, scale, scale, &width, &height);
-    (void)height;
     C2D_DrawText(&t, C2D_WithColor, center_x - width * 0.5f, y, 0.5f, scale, scale, color);
 }
 
@@ -4438,7 +3841,7 @@ static void draw_header(const char *title)
 {
     C2D_DrawRectSolid(0, 0, 0, 400, 34, COL_PAPER);
     C2D_DrawRectSolid(0, 33, 0, 400, 2, COL_PRIMARY);
-    draw_text(12, 8, 0.55f, COL_WHITE, "3dJelly");
+    draw_text(12, 8, 0.55f, COL_WHITE, "3dPlex");
 
     char centered[72];
     clipped_name(title ? title : "", centered, sizeof(centered), 24);
@@ -4465,18 +3868,10 @@ static void draw_list(MediaItem *items, int count, const char *title)
         return;
     }
 
-    if (g_selected < 0) {
-        g_selected = 0;
-    }
-    if (g_selected >= count) {
-        g_selected = count - 1;
-    }
-    if (g_selected < g_scroll) {
-        g_scroll = g_selected;
-    }
-    if (g_selected >= g_scroll + 5) {
-        g_scroll = g_selected - 4;
-    }
+    if (g_selected < 0) g_selected = 0;
+    if (g_selected >= count) g_selected = count - 1;
+    if (g_selected < g_scroll) g_scroll = g_selected;
+    if (g_selected >= g_scroll + 5) g_scroll = g_selected - 4;
 
     for (int row = 0; row < 5 && g_scroll + row < count; row++) {
         int idx = g_scroll + row;
@@ -4490,53 +3885,49 @@ static void draw_list(MediaItem *items, int count, const char *title)
         clipped_name(items[idx].name, name, sizeof(name), 42);
         draw_text(25, y + 6, 0.43f, COL_WHITE, "%s", name);
 
-        const char *kind = items[idx].collection_type[0] ? items[idx].collection_type : items[idx].type;
+        const char *kind = items[idx].type;
         draw_text(290, y + 8, 0.35f, COL_MUTED, "%s", kind);
     }
-
     draw_text(18, 224, 0.36f, COL_MUTED, "%d/%d", g_selected + 1, count);
 }
 
 static void draw_setup(void)
 {
-    draw_header("Setup");
+    draw_header("Plex Setup");
     C2D_DrawRectSolid(18, 48, 0, 364, 146, COL_PAPER);
 
-    const char *labels[] = {"Server", "Username", "Password", "Login"};
+    const char *labels[] = {"Local Server IP", "Plex Username", "Plex Password", "Login to Plex.tv"};
     char values[4][256];
-    snprintf(values[0], sizeof(values[0]), "%s", g_cfg.server);
+    snprintf(values[0], sizeof(values[0]), "%s", g_cfg.server[0] ? g_cfg.server : "http://192.168.x.x:32400");
     snprintf(values[1], sizeof(values[1]), "%s", g_cfg.username[0] ? g_cfg.username : "not set");
     snprintf(values[2], sizeof(values[2]), "%s", g_cfg.password[0] ? "stored" : "not set");
-    snprintf(values[3], sizeof(values[3]), "%s", g_cfg.token[0] ? "refresh token/session" : "authenticate");
+    snprintf(values[3], sizeof(values[3]), "%s", g_cfg.token[0] ? "Authenticated (Token Saved)" : "Press A to login");
+    
     QualityProfile q = quality_profile();
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
 
     for (int i = 0; i < 4; i++) {
         float y = 58.0f + i * 32.0f;
-        if (i == g_setup_row) {
-            C2D_DrawRectSolid(28, y - 4, 0, 344, 24, COL_PRIMARY_DARK);
-        }
+        if (i == g_setup_row) C2D_DrawRectSolid(28, y - 4, 0, 344, 24, COL_PRIMARY_DARK);
         draw_text(36, y, 0.43f, COL_WHITE, "%s", labels[i]);
-        draw_text(130, y, 0.39f, i == g_setup_row ? COL_WHITE : COL_MUTED, "%s", values[i]);
+        draw_text(160, y, 0.39f, i == g_setup_row ? COL_WHITE : COL_MUTED, "%s", values[i]);
     }
 
     draw_text(28, 204, 0.34f, COL_MUTED, "Quality: %s (%dx%d), changed during playback", quality_label, q.width, q.height);
-    draw_text(28, 220, 0.34f, COL_MUTED, "Playback: %s", g_is_new_3ds ? "New3DS H264/MVD + MJPEG fallback" : "Old3DS MJPEG software");
+    draw_text(28, 220, 0.34f, COL_MUTED, "Playback: %s", g_is_new_3ds ? "New3DS H264/MVD" : "Old3DS MJPEG");
 }
 
 static void draw_detail(void)
 {
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
-    draw_header("Item");
+    draw_header("Item Details");
     C2D_DrawRectSolid(18, 50, 0, 364, 140, COL_PAPER);
     C2D_DrawRectSolid(18, 50, 0, 8, 140, COL_PRIMARY);
     draw_text_wrap(38, 64, 0.62f, 330, COL_WHITE, "%s", g_current.name);
     draw_text(38, 106, 0.43f, COL_MUTED, "Type: %s", g_current.type);
-    if (g_current.year) {
-        draw_text(38, 128, 0.43f, COL_MUTED, "Year: %d", g_current.year);
-    }
+    if (g_current.year) draw_text(38, 128, 0.43f, COL_MUTED, "Year: %d", g_current.year);
     if (g_current.runtime_ticks) {
         unsigned long long minutes = g_current.runtime_ticks / 600000000ULL;
         draw_text(38, 150, 0.43f, COL_MUTED, "Runtime: %llumin", minutes);
@@ -4551,9 +3942,8 @@ static void draw_playback(void)
     char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
     float preview_w = 110.0f + (float)q.height * 0.35f;
-    if (preview_w > 250.0f) {
-        preview_w = 250.0f;
-    }
+    if (preview_w > 250.0f) preview_w = 250.0f;
+    
     C2D_DrawRectSolid(14, 45, 0, 372, 164, COL_PAPER);
     C2D_DrawRectSolid(24, 58, 0, preview_w, 74, COL_CARD);
     C2D_DrawRectSolid(24, 58, 0, (float)(g_frame_counter % (int)preview_w), 4, COL_PRIMARY);
@@ -4562,7 +3952,6 @@ static void draw_playback(void)
 
     draw_text_wrap(220, 58, 0.38f, 150, COL_WHITE, "%s", g_current.name);
     draw_text_wrap(24, 145, 0.35f, 344, COL_MUTED, "%s", g_play_status[0] ? g_play_status : "No probe yet.");
-    draw_text_wrap(24, 178, 0.31f, 344, COL_MUTED, "%s", g_play_url[0] ? g_play_url : "No URL.");
 }
 
 static void render(void)
@@ -4573,48 +3962,26 @@ static void render(void)
     C2D_TargetClear(g_top, COL_BG);
     C2D_SceneBegin(g_top);
     switch (g_view) {
-    case VIEW_SETUP:
-        draw_setup();
-        break;
-    case VIEW_LIBRARIES:
-        draw_list(g_libraries, g_library_count, "Libraries");
-        break;
-    case VIEW_ITEMS:
-        draw_list(g_items, g_item_count, g_screen_title);
-        break;
-    case VIEW_DETAIL:
-        draw_detail();
-        break;
-    case VIEW_PLAYBACK:
-        draw_playback();
-        break;
+    case VIEW_SETUP: draw_setup(); break;
+    case VIEW_LIBRARIES: draw_list(g_libraries, g_library_count, "Libraries"); break;
+    case VIEW_ITEMS: draw_list(g_items, g_item_count, g_screen_title); break;
+    case VIEW_DETAIL: draw_detail(); break;
+    case VIEW_PLAYBACK: draw_playback(); break;
     }
 
     C2D_TargetClear(g_bottom, COL_PAPER);
     C2D_SceneBegin(g_bottom);
-    if (g_view == VIEW_SETUP) {
-        draw_bottom_help("A edit/select  D-Pad move  START exit",
-                         "Quality is controlled from the bottom screen while video is playing.");
-    } else if (g_view == VIEW_PLAYBACK) {
-        draw_bottom_help("B back  X play again",
-                         "This screen only appears when playback did not stay open.");
-    } else if (g_view == VIEW_LIBRARIES) {
-        draw_bottom_help("A open  X refresh  Y setup",
-                         "");
-    } else {
-        draw_bottom_help("A open/play  B back  X refresh",
-                         "");
-    }
+    if (g_view == VIEW_SETUP) draw_bottom_help("A edit/select  D-Pad move  START exit", "Quality is controlled from the bottom screen during playback.");
+    else if (g_view == VIEW_PLAYBACK) draw_bottom_help("B back  X play again", "This screen appears when playback is closed.");
+    else if (g_view == VIEW_LIBRARIES) draw_bottom_help("A open  X refresh  Y setup", "");
+    else draw_bottom_help("A open/play  B back  X refresh", "");
 
     C3D_FrameEnd(0);
 }
 
 static void ui_graphics_init(void)
 {
-    if (g_ui_ready) {
-        return;
-    }
-
+    if (g_ui_ready) return;
     gfxInitDefault();
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
@@ -4628,18 +3995,11 @@ static void ui_graphics_init(void)
 
 static void ui_graphics_exit(void)
 {
-    if (!g_ui_ready) {
-        return;
-    }
-
-    if (g_text) {
-        C2D_TextBufDelete(g_text);
-        g_text = NULL;
-    }
+    if (!g_ui_ready) return;
+    if (g_text) { C2D_TextBufDelete(g_text); g_text = NULL; }
     C2D_Fini();
     C3D_Fini();
     gfxExit();
-
     g_top = NULL;
     g_bottom = NULL;
     g_ui_ready = false;
@@ -4647,27 +4007,17 @@ static void ui_graphics_exit(void)
 
 static void move_selection(int delta, int count)
 {
-    if (count <= 0) {
-        return;
-    }
+    if (count <= 0) return;
     g_selected += delta;
-    if (g_selected < 0) {
-        g_selected = count - 1;
-    }
-    if (g_selected >= count) {
-        g_selected = 0;
-    }
+    if (g_selected < 0) g_selected = count - 1;
+    if (g_selected >= count) g_selected = 0;
 }
 
 static void change_quality(int dir)
 {
     int idx = quality_index(g_cfg.quality);
-    if (idx < 0) {
-        idx = quality_index(default_quality());
-    }
-    if (idx < 0) {
-        idx = 0;
-    }
+    if (idx < 0) idx = quality_index(default_quality());
+    if (idx < 0) idx = 0;
 
     int count = 0;
     const int *levels = quality_levels(&count);
@@ -4681,84 +4031,45 @@ static void change_quality(int dir)
 
 static void handle_setup(u32 down)
 {
-    if (down & KEY_DOWN) {
-        g_setup_row = (g_setup_row + 1) % 4;
-    }
-    if (down & KEY_UP) {
-        g_setup_row = (g_setup_row + 3) % 4;
-    }
+    if (down & KEY_DOWN) g_setup_row = (g_setup_row + 1) % 4;
+    if (down & KEY_UP) g_setup_row = (g_setup_row + 3) % 4;
     if (down & KEY_B) {
-        if (g_cfg.token[0] && g_cfg.user_id[0]) {
-            load_libraries();
-        }
+        if (g_cfg.token[0] && g_cfg.server[0]) load_libraries();
     }
     if (down & KEY_A) {
-        if (g_setup_row == 0 && edit_text("Jellyfin server URL", g_cfg.server, sizeof(g_cfg.server), false)) {
+        if (g_setup_row == 0 && edit_text("Local Server URL (http://IP:32400)", g_cfg.server, sizeof(g_cfg.server), false)) {
             normalize_server_url(g_cfg.server);
             save_config();
-        } else if (g_setup_row == 1 && edit_text("Jellyfin username", g_cfg.username, sizeof(g_cfg.username), false)) {
-            g_cfg.token[0] = 0;
-            g_cfg.user_id[0] = 0;
+        } else if (g_setup_row == 1 && edit_text("Plex Username / Email", g_cfg.username, sizeof(g_cfg.username), false)) {
             save_config();
-        } else if (g_setup_row == 2 && edit_text("Jellyfin password", g_cfg.password, sizeof(g_cfg.password), true)) {
-            g_cfg.token[0] = 0;
-            g_cfg.user_id[0] = 0;
+        } else if (g_setup_row == 2 && edit_text("Plex Password", g_cfg.password, sizeof(g_cfg.password), true)) {
             save_config();
         } else if (g_setup_row == 3) {
-            if (login_jellyfin()) {
-                load_libraries();
-            }
+            if (login_plex() && g_cfg.server[0]) load_libraries();
         }
     }
-}
-
-static void handle_common(u32 down)
-{
-    (void)down;
 }
 
 static void handle_input(u32 down)
 {
-    if (g_view == VIEW_SETUP) {
-        handle_setup(down);
-        return;
-    }
-
-    handle_common(down);
+    if (g_view == VIEW_SETUP) { handle_setup(down); return; }
 
     if (g_view == VIEW_LIBRARIES) {
-        if (down & KEY_DOWN) {
-            move_selection(1, g_library_count);
-        }
-        if (down & KEY_UP) {
-            move_selection(-1, g_library_count);
-        }
-        if (down & KEY_X) {
-            load_libraries();
-        }
-        if (down & KEY_Y) {
-            g_view = VIEW_SETUP;
-            set_status("Setup opened.");
-        }
+        if (down & KEY_DOWN) move_selection(1, g_library_count);
+        if (down & KEY_UP) move_selection(-1, g_library_count);
+        if (down & KEY_X) load_libraries();
+        if (down & KEY_Y) { g_view = VIEW_SETUP; set_status("Setup opened."); }
         if ((down & KEY_A) && g_library_count > 0) {
-            push_nav("", "Libraries");
+            push_nav(g_libraries[g_selected].id, g_libraries[g_selected].name);
             load_items_for_parent(g_libraries[g_selected].id, g_libraries[g_selected].name);
         }
     } else if (g_view == VIEW_ITEMS) {
-        if (down & KEY_DOWN) {
-            move_selection(1, g_item_count);
-        }
-        if (down & KEY_UP) {
-            move_selection(-1, g_item_count);
-        }
+        if (down & KEY_DOWN) move_selection(1, g_item_count);
+        if (down & KEY_UP) move_selection(-1, g_item_count);
         if (down & KEY_X) {
-            if (g_current_parent_id[0]) {
-                load_items_for_parent(g_current_parent_id, g_screen_title);
-            }
+            if (g_current_parent_id[0]) load_items_for_parent(g_current_parent_id, g_screen_title);
         }
-        if (down & KEY_B) {
-            pop_nav();
-        }
+        if (down & KEY_B) pop_nav();
         if ((down & KEY_A) && g_item_count > 0) {
             MediaItem *item = &g_items[g_selected];
             if (is_playable(item)) {
@@ -4766,25 +4077,16 @@ static void handle_input(u32 down)
                 g_return_view = VIEW_ITEMS;
                 probe_playback();
             } else {
-                push_nav(g_current_parent_id, g_screen_title);
+                push_nav(item->id, item->name);
                 load_items_for_parent(item->id, item->name);
             }
         }
     } else if (g_view == VIEW_DETAIL) {
-        if (down & KEY_B) {
-            g_view = VIEW_ITEMS;
-        }
-        if (down & KEY_A) {
-            g_return_view = VIEW_DETAIL;
-            probe_playback();
-        }
+        if (down & KEY_B) g_view = VIEW_ITEMS;
+        if (down & KEY_A) { g_return_view = VIEW_DETAIL; probe_playback(); }
     } else if (g_view == VIEW_PLAYBACK) {
-        if (down & KEY_B) {
-            g_view = g_return_view;
-        }
-        if (down & KEY_X) {
-            probe_playback();
-        }
+        if (down & KEY_B) g_view = g_return_view;
+        if (down & KEY_X) probe_playback();
     }
 }
 
@@ -4796,18 +4098,14 @@ int main(void)
     ui_graphics_init();
     detect_hardware();
     Result http_ret = httpcInit(4 * 1024 * 1024);
-    if (R_SUCCEEDED(http_ret)) {
-        g_http_ready = true;
-    } else {
-        set_status("HTTP service failed: 0x%08lX", (unsigned long)http_ret);
-    }
+    if (R_SUCCEEDED(http_ret)) g_http_ready = true;
+    else set_status("HTTP service failed: 0x%08lX", (unsigned long)http_ret);
 
     load_config();
     apply_hardware_defaults();
-    if (g_cfg.token[0] && g_cfg.user_id[0]) {
-        if (!load_libraries()) {
-            g_view = VIEW_SETUP;
-        }
+    
+    if (g_cfg.token[0] && g_cfg.server[0]) {
+        if (!load_libraries()) g_view = VIEW_SETUP;
     } else {
         g_view = VIEW_SETUP;
     }
@@ -4820,24 +4118,22 @@ int main(void)
             break;
         }
         handle_input(down);
-        if (g_exit_requested) {
-            break;
-        }
+        if (g_exit_requested) break;
+        
         g_frame_counter++;
         render();
     }
 
     bool system_closing = app_system_closing();
-    if (!system_closing) {
-        save_config();
-    }
+    if (!system_closing) save_config();
+    
     if (g_http_ready && !system_closing) {
         httpcExit();
         g_http_ready = false;
     }
-    if (!system_closing) {
-        ui_graphics_exit();
-    }
+    
+    if (!system_closing) ui_graphics_exit();
+    
     if (g_apt_hooked && !system_closing) {
         aptUnhook(&g_apt_hook);
         g_apt_hooked = false;
