@@ -1192,15 +1192,23 @@ static void build_fallback_stream_url(const MediaItem *item, char *out, size_t o
     
     QualityProfile q = quality_profile();
     
-    // Put container=mpegts and videoResolution back in so Plex doesn't reject it
+    // Check if the server is running on a secure HTTPS port
+    const char *protocol = "http";
+    if (strncmp(g_cfg.server, "https://", 8) == 0) {
+        protocol = "https";
+    }
+    
+    // Re-engineered string containing full legacy parameters and direct stream flags
     snprintf(out, outsz,
-             "%s/video/:/transcode/universal/start?path=%s&mediaIndex=0&partIndex=0&protocol=http"
+             "%s/video/:/transcode/universal/start.ts?path=%s&mediaIndex=0&partIndex=0&protocol=%s"
              "&container=mpegts&offset=0&fastSeek=1&directPlay=0&directStream=0&videoQuality=100"
              "&videoResolution=%dx%d&maxVideoBitrate=%d&videoCodec=h264&audioCodec=aac&audioChannels=2"
-             "&session=3dPlex-Session-1&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
-             g_cfg.server, enc_key, q.width, q.height, (q.video_bitrate / 1000),
+             "&hasTranscodedVideo=true&hasTranscodedAudio=true&mediaLegacy=1"
+             "&session=3dPlexConsoleSession&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
+             g_cfg.server, enc_key, protocol, q.width, q.height, (q.video_bitrate / 1000),
              enc_client, g_cfg.token);
 }
+
 
 static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outsz, bool avi_container, u64 start_time_ticks)
 {
