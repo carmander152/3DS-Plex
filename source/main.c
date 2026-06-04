@@ -1234,12 +1234,16 @@ static void append_query(char *url, size_t urlsz, const char *query)
 static void build_fallback_stream_url(const MediaItem *item, char *out, size_t outsz)
 {
     QualityProfile q = quality_profile();
-    char enc_key[256];
+    
+    // Construct the explicit metadata path Plex requires
+    char full_path[256];
+    snprintf(full_path, sizeof(full_path), "/library/metadata/%s", item->id);
+    
+    char enc_key[512];
     char enc_client[128];
-    url_encode(item->id, enc_key, sizeof(enc_key));
+    url_encode(full_path, enc_key, sizeof(enc_key));
     url_encode(g_cfg.client_identifier, enc_client, sizeof(enc_client));
     
-    // Plex's universal transcoder can output a raw .ts stream matching the hardware decoder's needs
     snprintf(out, outsz,
              "%s/video/:/transcode/universal/start.ts?path=%s&mediaIndex=0&partIndex=0&protocol=http"
              "&fastSeek=1&directPlay=0&directStream=0&videoQuality=100&videoResolution=%dx%d"
@@ -1249,14 +1253,18 @@ static void build_fallback_stream_url(const MediaItem *item, char *out, size_t o
              enc_client, g_cfg.token);
 }
 
-// Rewritten to use Plex's transcoder for Old3DS Software MJPEG fallback
 static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outsz, bool avi_container, u64 start_time_ticks)
 {
     QualityProfile q = quality_profile();
     int fps = mjpeg_target_fps();
-    char enc_key[256];
+    
+    // Construct the explicit metadata path Plex requires
+    char full_path[256];
+    snprintf(full_path, sizeof(full_path), "/library/metadata/%s", item->id);
+    
+    char enc_key[512];
     char enc_client[128];
-    url_encode(item->id, enc_key, sizeof(enc_key));
+    url_encode(full_path, enc_key, sizeof(enc_key));
     url_encode(g_cfg.client_identifier, enc_client, sizeof(enc_client));
     
     unsigned long long offset_seconds = start_time_ticks / TICKS_PER_SECOND;
@@ -1270,7 +1278,6 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
                  g_cfg.server, enc_key, offset_seconds, q.width, q.height, (mjpeg_target_bitrate() / 1000),
                  AUDIO_SAMPLE_RATE, fps, enc_client, g_cfg.token);
     } else {
-        // Raw MJPEG fallback
         snprintf(out, outsz,
                  "%s/video/:/transcode/universal/start.mjpeg?path=%s&mediaIndex=0&partIndex=0&protocol=http"
                  "&offset=%llu&fastSeek=1&directPlay=0&directStream=0&videoQuality=100&videoResolution=%dx%d"
@@ -1279,7 +1286,7 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
                  g_cfg.server, enc_key, offset_seconds, q.width, q.height, (mjpeg_target_bitrate() / 1000),
                  fps, enc_client, g_cfg.token);
     }
-} // <-- MAKE SURE THIS BRACE IS HERE (Ends build_mjpeg_stream_url)
+}
 
 static void set_play_status(const char *fmt, ...)
 {
