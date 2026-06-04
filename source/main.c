@@ -1280,6 +1280,24 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
     }
 }
 
+static void set_play_status(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_play_status, sizeof(g_play_status), fmt, ap);
+    va_end(ap);
+    set_status("%s", g_play_status);
+}
+
+// Ensure the compiler doesn't complain about unused variables
+#define UNUSED(x) (void)(x)
+
+static bool request_playback_info(u64 start_time_ticks)
+{
+    UNUSED(start_time_ticks);
+    char quality_label[16];
+
+
 static bool request_playback_info(u64 start_time_ticks)
 {
     char quality_label[16];
