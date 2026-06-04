@@ -1,0 +1,36 @@
+name: 3DS Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    # We use the official devkitPro Docker image which has the compilers pre-installed
+    container:
+      image: devkitpro/devkitarm:latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install 3DS Libraries
+        # The container has the compiler, but we need to ensure the citro2d/citro3d libs are present
+        run: dkp-pacman -Syu --noconfirm 3ds-dev 3ds-citro3d 3ds-citro2d
+
+      - name: Build .3dsx
+        # We run the standard make command (ignoring the 'cia' target to avoid Windows PowerShell)
+        run: make
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Plex3DS-App
+          # This saves the compiled output so you can download it directly from GitHub
+          path: |
+            *.3dsx
+            *.smdh
