@@ -626,25 +626,6 @@ static void load_config(void)
     fclose(f);
 }
 
-
-
-    char line[384];
-    while (fgets(line, sizeof(line), f)) {
-        trim_newline(line);
-        char *eq = strchr(line, '=');
-        if (!eq) continue;
-        *eq++ = 0;
-        
-        if (strcmp(line, "server") == 0) copy_safe(g_cfg.server, sizeof(g_cfg.server), eq);
-        else if (strcmp(line, "username") == 0) copy_safe(g_cfg.username, sizeof(g_cfg.username), eq);
-        else if (strcmp(line, "password") == 0) copy_safe(g_cfg.password, sizeof(g_cfg.password), eq);
-        else if (strcmp(line, "token") == 0) copy_safe(g_cfg.token, sizeof(g_cfg.token), eq);
-        else if (strcmp(line, "client_identifier") == 0) copy_safe(g_cfg.client_identifier, sizeof(g_cfg.client_identifier), eq);
-        else if (strcmp(line, "quality") == 0) g_cfg.quality = atoi(eq);
-    }
-    fclose(f);
-}
-
 static void json_escape(const char *in, char *out, size_t outsz)
 {
     size_t w = 0;
