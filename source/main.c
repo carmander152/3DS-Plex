@@ -582,10 +582,12 @@ static void ensure_defaults(void)
 }
 
 // Updated save_config for Plex
+#define FIXED_CONFIG_PATH "sdmc:/3dPlex/config.ini"
+
 static void save_config(void)
 {
-    mkdir(CONFIG_DIR, 0777);
-    FILE *f = fopen(CONFIG_PATH, "w");
+    mkdir("sdmc:/3dPlex", 0777);
+    FILE *f = fopen(FIXED_CONFIG_PATH, "w");
     if (!f) return;
 
     fprintf(f, "server=%s\n", g_cfg.server);
@@ -597,13 +599,13 @@ static void save_config(void)
     fclose(f);
 }
 
-// Updated load_config for Plex
 static void load_config(void)
 {
     memset(&g_cfg, 0, sizeof(g_cfg));
-    FILE *f = fopen(CONFIG_PATH, "r");
+    FILE *f = fopen(FIXED_CONFIG_PATH, "r");
     if (!f) {
-        ensure_defaults();
+        snprintf(g_cfg.client_identifier, sizeof(g_cfg.client_identifier), "3dPlex-Console01");
+        g_cfg.quality = 240;
         return;
     }
 
@@ -622,7 +624,24 @@ static void load_config(void)
         else if (strcmp(line, "quality") == 0) g_cfg.quality = atoi(eq);
     }
     fclose(f);
-    ensure_defaults();
+}
+
+
+    char line[384];
+    while (fgets(line, sizeof(line), f)) {
+        trim_newline(line);
+        char *eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq++ = 0;
+        
+        if (strcmp(line, "server") == 0) copy_safe(g_cfg.server, sizeof(g_cfg.server), eq);
+        else if (strcmp(line, "username") == 0) copy_safe(g_cfg.username, sizeof(g_cfg.username), eq);
+        else if (strcmp(line, "password") == 0) copy_safe(g_cfg.password, sizeof(g_cfg.password), eq);
+        else if (strcmp(line, "token") == 0) copy_safe(g_cfg.token, sizeof(g_cfg.token), eq);
+        else if (strcmp(line, "client_identifier") == 0) copy_safe(g_cfg.client_identifier, sizeof(g_cfg.client_identifier), eq);
+        else if (strcmp(line, "quality") == 0) g_cfg.quality = atoi(eq);
+    }
+    fclose(f);
 }
 
 static void json_escape(const char *in, char *out, size_t outsz)
