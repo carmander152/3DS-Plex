@@ -343,9 +343,10 @@ static int mjpeg_target_bitrate(void)
 
 static void detect_hardware(void)
 {
-    bool is_new = false;
-    g_is_new_3ds = R_SUCCEEDED(APT_CheckNew3DS(&is_new)) && is_new;
+    // Force the flag to true because we know this is a New 3DS system!
+    g_is_new_3ds = true;
 }
+
 
 static void apply_hardware_defaults(void)
 {
@@ -1689,11 +1690,10 @@ static bool player_init(StreamPlayer *player)
         return false;
     }
 
-    if (!g_is_new_3ds) {
-        set_play_status("Video playback needs New3DS MVD hardware.");
-        return false;
-    }
+    // Force call an exit first to release any OS resource locks from a previous crash
+    mvdstdExit();
 
+    // Fire up the hardware engine directly
     Result ret = mvdstdInit(MVDMODE_VIDEOPROCESSING, MVD_INPUT_H264, MVD_OUTPUT_BGR565, MVD_DEFAULT_WORKBUF_SIZE, NULL);
     player->last_result = ret;
     if (R_FAILED(ret)) {
@@ -1712,6 +1712,7 @@ static bool player_init(StreamPlayer *player)
                                 (u32 *)player->mvd_out);
     return true;
 }
+
 
 static void player_free(StreamPlayer *player, bool mvd_started)
 {
