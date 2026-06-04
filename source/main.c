@@ -16,7 +16,7 @@
 #define CONFIG_PATH "sdmc:/3dPlex/config.ini"
 
 // Buffer increased to 8MB to prevent TV Show folder crashes
-#define MAX_ITEMS 36
+#define MAX_ITEMS 2048
 #define MAX_STACK 8
 #define HTTP_CAP (8 * 1024 * 1024)
 #define HTTP_STATUS_NONE 0xFFFFFFFFu
