@@ -1189,14 +1189,16 @@ static void build_fallback_stream_url(const MediaItem *item, char *out, size_t o
     url_encode(item->id, enc_key, sizeof(enc_key)); 
     url_encode(g_cfg.client_identifier, enc_client, sizeof(enc_client));
     
+    // Added session=3dPlexSession and container=mpegts to satisfy Plex's transcoder
     snprintf(out, outsz,
-             "%s/video/:/transcode/universal/start.ts?path=%s&mediaIndex=0&partIndex=0&protocol=http"
-             "&fastSeek=1&directPlay=0&directStream=0&videoQuality=100&videoResolution=%dx%d"
+             "%s/video/:/transcode/universal/start?path=%s&mediaIndex=0&partIndex=0&protocol=http"
+             "&container=mpegts&fastSeek=1&directPlay=0&directStream=0&videoQuality=100&videoResolution=%dx%d"
              "&maxVideoBitrate=%d&videoCodec=h264&audioCodec=aac&audioChannels=2"
-             "&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
+             "&session=3dPlexSession&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
              g_cfg.server, enc_key, q.width, q.height, (q.video_bitrate / 1000),
              enc_client, g_cfg.token);
 }
+
 
 static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outsz, bool avi_container, u64 start_time_ticks)
 {
@@ -1209,24 +1211,26 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
     
     unsigned long long offset_seconds = start_time_ticks / TICKS_PER_SECOND;
 
+    // Added session IDs here as well
     if (avi_container) {
         snprintf(out, outsz,
-                 "%s/video/:/transcode/universal/start.avi?path=%s&mediaIndex=0&partIndex=0&protocol=http"
-                 "&offset=%llu&fastSeek=1&directPlay=0&directStream=0&videoQuality=100&videoResolution=%dx%d"
+                 "%s/video/:/transcode/universal/start?path=%s&mediaIndex=0&partIndex=0&protocol=http"
+                 "&container=avi&offset=%llu&fastSeek=1&directPlay=0&directStream=0&videoQuality=100&videoResolution=%dx%d"
                  "&maxVideoBitrate=%d&videoCodec=mjpeg&audioCodec=pcm_s16le&audioChannels=1&audioSampleRate=%d"
-                 "&videoFramerate=%d&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
+                 "&videoFramerate=%d&session=3dPlexSession&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
                  g_cfg.server, enc_key, offset_seconds, q.width, q.height, (mjpeg_target_bitrate() / 1000),
                  AUDIO_SAMPLE_RATE, fps, enc_client, g_cfg.token);
     } else {
         snprintf(out, outsz,
-                 "%s/video/:/transcode/universal/start.mjpeg?path=%s&mediaIndex=0&partIndex=0&protocol=http"
+                 "%s/video/:/transcode/universal/start?path=%s&mediaIndex=0&partIndex=0&protocol=http"
                  "&offset=%llu&fastSeek=1&directPlay=0&directStream=0&videoQuality=100&videoResolution=%dx%d"
                  "&maxVideoBitrate=%d&videoCodec=mjpeg&videoFramerate=%d"
-                 "&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
+                 "&session=3dPlexSession&X-Plex-Platform=Nintendo%%203DS&X-Plex-Client-Identifier=%s&X-Plex-Token=%s",
                  g_cfg.server, enc_key, offset_seconds, q.width, q.height, (mjpeg_target_bitrate() / 1000),
                  fps, enc_client, g_cfg.token);
     }
 }
+
 static void set_play_status(const char *fmt, ...)
 {
     va_list ap;
@@ -2107,7 +2111,8 @@ static bool perform_plex_search(void)
     url_encode(query, enc_query, sizeof(enc_query));
     
     char path[512];
-    snprintf(path, sizeof(path), "/hubs/search?query=%s", enc_query);
+    // Changed from /hubs/search to /library/search for flat lists
+    snprintf(path, sizeof(path), "/library/search?query=%s", enc_query);
     
     HttpResponse res;
     set_status("Searching for: %s...", query);
@@ -2127,6 +2132,7 @@ static bool perform_plex_search(void)
     g_view = VIEW_ITEMS; 
     return true;
 }
+
 
 static void handle_setup(u32 down)
 {
