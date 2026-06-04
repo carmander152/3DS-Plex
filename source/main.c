@@ -627,6 +627,7 @@ static void load_config(void)
 }
 
 
+
     char line[384];
     while (fgets(line, sizeof(line), f)) {
         trim_newline(line);
