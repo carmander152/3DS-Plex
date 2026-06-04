@@ -1278,7 +1278,7 @@ static void build_mjpeg_stream_url(const MediaItem *item, char *out, size_t outs
                  g_cfg.server, enc_key, offset_seconds, q.width, q.height, (mjpeg_target_bitrate() / 1000),
                  fps, enc_client, g_cfg.token);
     }
-}
+} // <-- MAKE SURE THIS BRACE IS HERE (Ends build_mjpeg_stream_url)
 
 static void set_play_status(const char *fmt, ...)
 {
@@ -1287,7 +1287,7 @@ static void set_play_status(const char *fmt, ...)
     vsnprintf(g_play_status, sizeof(g_play_status), fmt, ap);
     va_end(ap);
     set_status("%s", g_play_status);
-}
+} // <-- MAKE SURE THIS BRACE IS HERE (Ends set_play_status)
 
 // Ensure the compiler doesn't complain about unused variables
 #define UNUSED(x) (void)(x)
@@ -1296,12 +1296,8 @@ static bool request_playback_info(u64 start_time_ticks)
 {
     UNUSED(start_time_ticks);
     char quality_label[16];
-
-
-static bool request_playback_info(u64 start_time_ticks)
-{
-    char quality_label[16];
     format_quality_label(quality_label, sizeof(quality_label), g_cfg.quality);
+
     
     snprintf(g_play_status, sizeof(g_play_status), "Requesting %s Plex session...", quality_label);
     set_status("%s", g_play_status);
